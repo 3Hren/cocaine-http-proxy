@@ -1,0 +1,28 @@
+# IP address for HTTP listeners to bind on.
+addr: "::"
+
+# Port for HTTP listeners to bind on.
+port: 8080
+
+threads:
+  http: 8
+  network: 16
+
+monitoring:
+  addr: "::"
+  port: 8081
+# # Default pool size for applications.
+# pool: 10
+#
+# logging:
+#   prefix: proxy
+#   severity: 2
+#
+# # Fine-grained application settings.
+# app:
+#   echo:
+#     pool: 4
+#
+# # Locator endpoints.
+# locators:
+#   - :::10053

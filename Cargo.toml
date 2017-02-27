@@ -1,0 +1,29 @@
+[package]
+name = "cocaine-http-proxy"
+version = "0.1.0"
+authors = ["Evgeny Safronov <division494@gmail.com>"]
+
+[dependencies]
+log = "0.3"
+net2 = "0.2"
+rand = "0.3"
+futures = "0.1"
+
+serde = "0.9"
+serde_derive = "0.9"
+serde_yaml = "0.6"
+
+tokio-proto = "0.1"
+tokio-service = "0.1"
+tokio-minihttp = { git = "https://github.com/tokio-rs/tokio-minihttp", rev = "753a94c138921f1962fcc8a0c38a4edcf9c0c2a6" }
+tokio-core = "=0.1.4"
+
+cocaine = { path = "../cocaine-framework-rust" }
+rmp-serde = { path = "../rmp/rmp-serde" }
+rmpv = { path = "../rmp/rmpv", features = ["with-serde"] }
+
+clap = "~2.20.5"
+
+[profile.release]
+debug = true
+panic = "abort"
