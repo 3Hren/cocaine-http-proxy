@@ -1,11 +1,19 @@
+//! It is unclear what type of HTTP backend will be chosen finally.
+
+// TODO: unix/ping -> health check.
+// TODO: unix/config -> dump config (often config file changes, but daemon not restarted).
+// TODO: unix/metrics -> dump metrics.
+// TODO: show info about service pool. Draw cluster map. Count response times.
+
 use std;
 use std::borrow::Borrow;
+use std::io::{self, ErrorKind};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::thread;
-use std::time::{Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use rand;
 
@@ -63,18 +71,23 @@ struct Proxy {
     txs: Vec<mpsc::UnboundedSender<Event>>,
 }
 
+impl Proxy {
+    fn call_jsonrpc(&self, _req: Request) -> <Self as Service>::Future {
+        let mut res = Response::new();
+        res.status_code(200, "OK");
+        box future::ok(res)
+    }
+}
+
 impl Service for Proxy {
     type Request  = Request;
     type Response = Response;
-    type Error    = std::io::Error;
-    type Future   = Box<Future<Item = Response, Error = std::io::Error>>;
+    type Error    = io::Error;
+    type Future   = Box<Future<Item = Response, Error = io::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         if let Some(..) = req.headers().find(|&(name, ..)| name == "X-Cocaine-JSON-RPC") {
-            // TODO: Go to echo service.
-            let mut res = Response::new();
-            res.status_code(200, "OK");
-            box future::ok(res)
+            self.call_jsonrpc(req)
         } else {
             let service = "geobase".into();
             let (tx, rx) = oneshot::channel();
@@ -83,20 +96,26 @@ impl Service for Proxy {
             let rolled = x % self.txs.len();
             self.txs[rolled].send((service, tx)).unwrap();
 
-            box rx.then(move |result| {
+            box rx.map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)))
+                .and_then(move |mut response|
+            {
+                response.header("X-Powered-By", "Cocaine");
+
+                // TODO: Write to `proxy/access` logs.
                 let elapsed = birth.elapsed();
                 info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
-                Ok(result.unwrap())
+
+                Ok(response)
             })
         }
     }
 }
 
-impl Drop for Proxy {
-    fn drop(&mut self) {
-        println!("dropped");
-    }
-}
+// impl Drop for Proxy {
+//     fn drop(&mut self) {
+//         println!("dropped");
+//     }
+// }
 
 struct SingleChunkReadDispatch {
     tx: oneshot::Sender<Response>,
@@ -105,7 +124,6 @@ struct SingleChunkReadDispatch {
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
         let mut response = Response::new();
-        response.header("X-Powered-By", "Cocaine");
 
         match ty {
             0 => {
@@ -208,14 +226,69 @@ impl Dispatch for AppReadDispatch {
     }
 }
 
+struct ServicePool {
+    /// Next service.
+    counter: usize,
+    name: String,
+    /// Reconnect threshold.
+    threshold: Duration,
+    handle: Handle,
+    last_traverse: SystemTime,
+
+    services: Vec<(cocaine::Service, SystemTime)>,
+}
+
+impl ServicePool {
+    fn new(name: String, limit: usize, handle: &Handle) -> Self {
+        let now = SystemTime::now();
+
+        Self {
+            counter: 0,
+            name: name.clone(),
+            threshold: Duration::new(60, 0),
+            handle: handle.clone(),
+            last_traverse: now,
+            services: std::iter::repeat(name)
+                .take(limit)
+                .map(|name| (cocaine::Service::new(name.clone(), handle), now))
+                .collect()
+        }
+    }
+
+    fn next(&mut self) -> &cocaine::Service {
+        let now = SystemTime::now();
+
+        // No often than every 5 seconds we're traversing services for reconnection.
+        if now.duration_since(self.last_traverse).unwrap() > Duration::new(5, 0) {
+            self.last_traverse = now;
+
+            let mut killed = 0;
+
+            for id in 0..self.services.len() {
+                let (.., birth) = self.services[id];
+                if now.duration_since(birth).unwrap() > self.threshold {
+                    killed += 1;
+                    self.services[id] = (cocaine::Service::new(self.name.clone(), &self.handle), now);
+                }
+
+                if killed > self.services.len() / 2 {
+                    break;
+                }
+
+                // TODO: Tiny preconnection optimization.
+            }
+        }
+
+        self.counter = (self.counter + 1) % self.services.len();
+        &self.services[self.counter].0
+    }
+}
+
 struct Infinity {
     handle: Handle,
     rx: mpsc::UnboundedReceiver<Event>,
 
-    // TODO: Reconnection logic.
-    // Le plan: have a pool of name -> List<(service, connection_duration)>.
-    // If connection_duration > threshold &&  - reconnect.
-    pool: HashMap<String, Vec<cocaine::Service>>,
+    pool: HashMap<String, ServicePool>,
 }
 
 impl Infinity {
@@ -225,6 +298,14 @@ impl Infinity {
             rx: rx,
             pool: HashMap::new(),
         }
+    }
+}
+
+impl Infinity {
+    fn select_service(&mut self, name: String, handle: &Handle) -> &cocaine::Service {
+        let mut pool = self.pool.entry_ref(&name)
+            .or_insert_with(|| ServicePool::new(name, 10, handle));
+        pool.next()
     }
 }
 
@@ -240,18 +321,11 @@ impl Future for Infinity {
                 Ok(Async::Ready(Some((name, tx)))) => {
                     debug!("request for `{}` service", name);
 
+                    // Select next service that is not reconnecting right now. No more than N/2
+                    // services can be in reconnecting state concurrently.
                     let handle = self.handle.clone();
-                    let services = self.pool.entry_ref(&name)
-                        .or_insert_with(|| {
-                            std::iter::repeat(name)
-                                .take(10)
-                                .map(|name| cocaine::Service::new(name.clone(), &handle))
-                                .collect()
-                            });
+                    let ref service = self.select_service(name, &handle);
 
-                    let x = rand::random::<usize>();
-                    debug!("rolled {} of {}", x % services.len(), services.len());
-                    let ref service = services[x % services.len()];
                     // let future = service.call(0, &vec!["http"], AppReadDispatch {
                     //     tx: tx,
                     //     body: None,
@@ -265,10 +339,11 @@ impl Future for Infinity {
                     // })
                     // .then(|_| Ok(()));
 
-                    let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch {
-                        tx: tx,
-                    })
-                    .then(|_| Ok(()));
+                    let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
+                        .then(|tx| {
+                            drop(tx);
+                            Ok(())
+                        });
 
 
                     handle.spawn(future);
@@ -294,7 +369,7 @@ impl NewService for ProxyFactory {
     type Request  = Request;
     type Response = Response;
     type Instance = Proxy;
-    type Error    = std::io::Error;
+    type Error    = io::Error;
 
     fn new_service(&self) -> Result<Self::Instance, Self::Error> {
         Ok(Proxy { txs: self.txs.clone() })
@@ -336,8 +411,3 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     Ok(())
 }
-
-// TODO: unix/ping -> health check.
-// TODO: unix/config -> dump config (often config file changes, but daemon not restarted).
-// TODO: unix/metrics -> dump metrics.
-// TODO: show info about service pool. Draw cluster map. Count response times.

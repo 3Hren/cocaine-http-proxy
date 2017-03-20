@@ -24,6 +24,9 @@ rmpv = { path = "../rmp/rmpv", features = ["with-serde"] }
 
 clap = "~2.20.5"
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 debug = true
 panic = "abort"
