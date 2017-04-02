@@ -33,7 +33,7 @@ use rmps;
 use rmpv::ValueRef;
 use cocaine::{self, Builder, Dispatch, Error};
 use cocaine::protocol::{self, Flatten};
-use cocaine::logging::{LoggerContext, Sev};
+use cocaine::logging::LoggerContext;
 
 use config::Config;
 
@@ -133,7 +133,8 @@ impl Route for GeobaseRoute {
 
             // TODO: Write to `proxy/access` logs.
             // let elapsed = birth.elapsed();
-            // info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
+            // info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() *
+            // 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
 
             Ok(response)
         }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
