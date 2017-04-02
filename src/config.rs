@@ -22,7 +22,7 @@ impl ThreadConfig {
 
     fn sanitize(&self) -> Result<(), Box<Error>> {
         if let Some(0) = self.http {
-            return Err("number of HTTP threads must be positive value (or absent)".into());
+            return Err("number of HTTP threads must be a positive value (or absent)".into());
         }
 
         Ok(())
