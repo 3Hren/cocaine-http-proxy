@@ -1,5 +1,5 @@
 # IP address for HTTP listeners to bind on.
-addr: "::"
+addr: "::1"
 
 # Port for HTTP listeners to bind on.
 port: 8080
@@ -10,19 +10,27 @@ threads:
 
 monitoring:
   addr: "::"
-  port: 8081
-# # Default pool size for applications.
-# pool: 10
-#
-# logging:
-#   prefix: proxy
-#   severity: 2
-#
-# # Fine-grained application settings.
-# app:
-#   echo:
-#     pool: 4
-#
-# # Locator endpoints.
-# locators:
-#   - :::10053
+  port: 10000
+
+# Logging settings. All logs are written directly into the logging service.
+logging:
+  # Service name into which all logging will be redirected.
+  name: logging
+  # Base prefix.
+  # For example, access logs will have the source field `<prefix>/access`.
+  prefix: proxy
+  # Severity filter.
+  # Logging events with severity less than specified will be dropped.
+  severity: info
+
+# Default pool size for applications.
+pool: 10
+# Fine-grained application settings.
+app:
+  echo:
+    pool: 4
+
+# Locator endpoints.
+locators:
+  - ["::1", 10053]
+  - ["127.0.0.1", 10053]

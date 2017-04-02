@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use std::net::IpAddr;
 
 use serde_yaml;
 
@@ -30,9 +31,10 @@ impl ThreadConfig {
 
 #[derive(Deserialize)]
 pub struct Config {
-    addr: String,
+    addr: IpAddr,
     port: u16,
     threads: ThreadConfig,
+    locators:  Vec<(IpAddr, u16)>,
 }
 
 impl Config {
@@ -49,7 +51,7 @@ impl Config {
         Ok(())
     }
 
-    pub fn addr(&self) -> &str {
+    pub fn addr(&self) -> &IpAddr {
         &self.addr
     }
 

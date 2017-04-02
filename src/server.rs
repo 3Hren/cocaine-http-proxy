@@ -6,14 +6,13 @@
 // TODO: show info about service pool. Draw cluster map. Count response times.
 
 use std;
-use std::borrow::Borrow;
-use std::io::{self, ErrorKind};
-use std::collections::hash_map::Entry;
+use std::boxed::FnBox;
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use rand;
 
@@ -24,90 +23,150 @@ use tokio_minihttp::{Request, Response, Http};
 use tokio_proto::TcpServer;
 use tokio_service::{Service, NewService};
 
+use slog;
+use slog_term;
+use slog::DrainExt;
+
+use rmps;
 use rmpv::ValueRef;
 use cocaine::{self, Dispatch, Error};
+use cocaine::protocol::{self, Flatten};
+use cocaine::logging::{LoggerContext, Sev};
 
 use config::Config;
 
-trait HashMapExt<K: Hash + Eq, V> {
-    fn entry_ref<'a, Q, B: ?Sized>(&'a mut self, key: Q) -> Entry<'a, K, V>
-        where Q: Query<K, B>,
-              K: Borrow<B>,
-              B: Hash + Eq;
+type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
+
+trait Route: Send + Sync {
+    type Future: Future<Item = Response, Error = io::Error>;
+
+    /// Tries to process the request, returning a future (doesn't matter success or not) on
+    /// conditions match, `None` otherwise.
+    ///
+    /// A route can process the request fully if all conditions are met, for example if it requires
+    /// some headers and all of them are specified.
+    /// Also it may decide to fail the request, because of incomplete prerequests, for example if
+    /// it detects all required headers, but failes to match the request method.
+    /// At last a route can be neutral to the request, returning `None`.
+    fn process(&self, request: &Request) -> Option<Self::Future>;
 }
 
-impl<K: Hash + Eq, V> HashMapExt<K, V> for HashMap<K, V> {
-    fn entry_ref<'a, Q, B: ?Sized>(&'a mut self, key: Q) -> Entry<'a, K, V>
-        where Q: Query<K, B>,
-              K: Borrow<B>,
-              B: Hash + Eq
-    {
-        // Can check for equality using `k.borrow() == key.borrow_as_key()`.
-        //
-        // Entry would have to gain Q: IntoOwned<K> as a type param with default
-        // Q = K and call `into_key` only if necessary.
-        self.entry(key.into_key())
-    }
-}
-
-pub trait Query<T, B: ?Sized>: Sized where T: Borrow<B> {
-    fn into_key(self) -> T;
-    fn borrow_as_key(&self) -> &B;
-}
-
-impl<T> Query<T, T> for T {
-    fn into_key(self) -> T { self }
-    fn borrow_as_key(&self) -> &Self { self }
-}
-
-impl<'a, B: ToOwned + ?Sized> Query<B::Owned, B> for &'a B {
-    fn into_key(self) -> B::Owned { self.to_owned() }
-    fn borrow_as_key(&self) -> &B { *self }
-}
-
-type Event = (String, oneshot::Sender<Response>);
-
-struct Proxy {
+struct MainRoute {
     txs: Vec<mpsc::UnboundedSender<Event>>,
 }
 
-impl Proxy {
-    fn call_jsonrpc(&self, _req: Request) -> <Self as Service>::Future {
-        let mut res = Response::new();
-        res.status_code(200, "OK");
-        box future::ok(res)
+impl Route for MainRoute {
+    type Future = Box<Future<Item = Response, Error = io::Error>>;
+
+    fn process(&self, req: &Request) -> Option<Self::Future> {
+        let service = req.headers().find(|&(name, ..)| name == "X-Cocaine-Service");
+        let event = req.headers().find(|&(name, ..)| name == "X-Cocaine-Event");
+
+        match (service, event) {
+            (Some(service), Some(event)) => {
+                let service = String::from_utf8(service.1.to_vec()).unwrap();
+                let event = String::from_utf8(event.1.to_vec()).unwrap();
+
+                let (tx, rx) = oneshot::channel();
+                let x = rand::random::<usize>();
+                let rolled = x % self.txs.len();
+                self.txs[rolled].send((service, box move |service: &cocaine::Service| {
+                    let future = service.call(0, &vec![event], AppReadDispatch {
+                        tx: tx,
+                        body: None,
+                        response: Some(Response::new()),
+                    })
+                    .and_then(|tx| {
+                        let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
+                        tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
+                        tx.send(2, &[0; 0]);
+                        Ok(())
+                    })
+                    .then(|_| Ok(()));
+
+                    future.boxed()
+                })).unwrap();
+
+                let future = rx.and_then(move |mut response| {
+                    response.header("X-Powered-By", "Cocaine");
+                    Ok(response)
+                }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
+
+                Some(future.boxed())
+            }
+            (Some(..), None) | (None, Some(..)) => {
+                let mut res = Response::new();
+                res.status_code(400, "Bad Request");
+                res.body(&"Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
+                Some(future::ok(res).boxed())
+            }
+            (None, None) => None,
+        }
     }
 }
 
-impl Service for Proxy {
+struct GeobaseRoute {
+    txs: Vec<mpsc::UnboundedSender<Event>>,
+}
+
+impl Route for GeobaseRoute {
+    type Future = Box<Future<Item = Response, Error = io::Error>>;
+
+    fn process(&self, _req: &Request) -> Option<Self::Future> {
+        let (tx, rx) = oneshot::channel();
+        let x = rand::random::<usize>();
+        // let birth = Instant::now();
+        let rolled = x % self.txs.len();
+        self.txs[rolled].send(("geobase".into(), box move |service: &cocaine::Service| {
+            let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
+                .then(|tx| {
+                    drop(tx);
+                    Ok(())
+                });
+            future.boxed()
+        })).unwrap();
+
+        let future = rx.and_then(move |mut response| {
+            response.header("X-Powered-By", "Cocaine");
+
+            // TODO: Write to `proxy/access` logs.
+            // let elapsed = birth.elapsed();
+            // info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
+
+            Ok(response)
+        }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
+
+        Some(future.boxed())
+    }
+}
+
+struct ProxyService {
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = io::Error>>>>>,
+}
+
+impl ProxyService {
+    fn not_found(&self) -> Response {
+        let mut res = Response::new();
+        res.status_code(404, "Bad Request");
+        res.body(&"Not found");
+        res
+    }
+}
+
+impl Service for ProxyService {
     type Request  = Request;
     type Response = Response;
     type Error    = io::Error;
     type Future   = Box<Future<Item = Response, Error = io::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
-        if let Some(..) = req.headers().find(|&(name, ..)| name == "X-Cocaine-JSON-RPC") {
-            self.call_jsonrpc(req)
-        } else {
-            let service = "geobase".into();
-            let (tx, rx) = oneshot::channel();
-            let x = rand::random::<usize>();
-            let birth = Instant::now();
-            let rolled = x % self.txs.len();
-            self.txs[rolled].send((service, tx)).unwrap();
-
-            box rx.map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)))
-                .and_then(move |mut response|
-            {
-                response.header("X-Powered-By", "Cocaine");
-
-                // TODO: Write to `proxy/access` logs.
-                let elapsed = birth.elapsed();
-                info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
-
-                Ok(response)
-            })
+        for route in &self.routes {
+            if let Some(future) = route.process(&req) {
+                return future;
+            }
         }
+
+        future::ok(self.not_found()).boxed()
     }
 }
 
@@ -158,8 +217,8 @@ impl Dispatch for SingleChunkReadDispatch {
 
 struct AppReadDispatch {
     tx: oneshot::Sender<Response>,
-    body: Option<String>,
-    res: Option<Response>,
+    body: Option<Vec<u8>>,
+    response: Option<Response>,
 }
 
 #[derive(Deserialize)]
@@ -168,53 +227,40 @@ struct MetaInfo{
     headers: Vec<(String, String)>
 }
 
-#[derive(Deserialize)]
-struct Body {
-    body: String,
-}
-
 impl Dispatch for AppReadDispatch {
     fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        // match ty {
-        //     0 => {
-        //         if self.body.is_none() {
-        //             let data = match data {
-        //                 &ValueRef::Array(mut data) => data.pop().unwrap(),
-        //                 _ => unimplemented!(),
-        //             };
-        //             let meta: MetaInfo = rmps::from_slice(data.as_slice().unwrap()).unwrap();
-        //             let mut res = self.res.take().unwrap();
-        //             res.status_code(meta.code, "OK");
-        //             for &(ref name, ref value) in &meta.headers {
-        //                 res.header(&name, &value);
-        //             }
-        //             self.res = Some(res);
-        //             self.body = Some("".into());
-        //         } else {
-        //             let body: Body = rmpv::ext::from_value(data).unwrap();
-        //             self.body.as_mut().unwrap().push_str(&body.body);
-        //         }
-        //
-        //         Some(self)
-        //     }
-        //     2 => {
-        //         let mut res = self.res.take().unwrap();
-        //         res.header("X-Powered-By", "Cocaine")
-        //             .body(&self.body.take().unwrap());
-        //
-        //         self.tx.complete(res);
-        //         None
-        //     }
-        //     _ => {
-        //         let mut res = self.res.take().unwrap();
-        //         res.status_code(500, "Internal Server Error")
-        //             .body(&"");
-        //
-        //         self.tx.complete(res);
-        //         None
-        //     }
-        // }
-        unimplemented!();
+        match protocol::deserialize::<protocol::Streaming<rmps::Raw>>(ty, data)
+            .flatten()
+        {
+            Ok(Some(data)) => {
+                if self.body.is_none() {
+                    let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
+                    let mut response = self.response.take().unwrap();
+                    response.status_code(meta.code, "OK");
+                    for &(ref name, ref value) in &meta.headers {
+                        response.header(&name, &value);
+                    }
+                    self.response = Some(response);
+                    self.body = Some(Vec::with_capacity(64));
+                } else {
+                    self.body.as_mut().unwrap().extend(data.as_bytes());
+                }
+                Some(self)
+            }
+            Ok(None) => {
+                let mut response = self.response.take().unwrap();
+                response.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
+                drop(self.tx.send(response));
+                None
+            }
+            Err(err) => {
+                let mut response = Response::new();
+                response.status_code(500, "Internal Server Error");
+                response.body(&format!("{}", err));
+                drop(self.tx.send(response));
+                None
+            }
+        }
     }
 
     fn discard(self: Box<Self>, err: &Error) {
@@ -303,7 +349,7 @@ impl Infinity {
 
 impl Infinity {
     fn select_service(&mut self, name: String, handle: &Handle) -> &cocaine::Service {
-        let mut pool = self.pool.entry_ref(&name)
+        let mut pool = self.pool.entry(name.clone())
             .or_insert_with(|| ServicePool::new(name, 10, handle));
         pool.next()
     }
@@ -314,39 +360,15 @@ impl Future for Infinity {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        debug!("woken up; pool size: {}", self.pool.len());
-
         loop {
             match self.rx.poll() {
-                Ok(Async::Ready(Some((name, tx)))) => {
-                    debug!("request for `{}` service", name);
-
-                    // Select next service that is not reconnecting right now. No more than N/2
+                Ok(Async::Ready(Some((name, func)))) => {
+                    // Select the next service that is not reconnecting right now. No more than N/2
                     // services can be in reconnecting state concurrently.
                     let handle = self.handle.clone();
                     let ref service = self.select_service(name, &handle);
 
-                    // let future = service.call(0, &vec!["http"], AppReadDispatch {
-                    //     tx: tx,
-                    //     body: None,
-                    //     res: Some(Response::new()),
-                    // })
-                    // .and_then(|tx| {
-                    //     let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
-                    //     tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
-                    //     tx.send(2, &[0; 0]);
-                    //     Ok(())
-                    // })
-                    // .then(|_| Ok(()));
-
-                    let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
-                        .then(|tx| {
-                            drop(tx);
-                            Ok(())
-                        });
-
-
-                    handle.spawn(future);
+                    handle.spawn(func.call_box((service,)));
                 }
                 Ok(Async::NotReady) => {
                     break;
@@ -361,23 +383,59 @@ impl Future for Infinity {
     }
 }
 
-struct ProxyFactory {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
+struct ProxyServiceFactory {
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = io::Error>>>>>,
 }
 
-impl NewService for ProxyFactory {
+impl NewService for ProxyServiceFactory {
     type Request  = Request;
     type Response = Response;
-    type Instance = Proxy;
+    type Instance = ProxyService;
     type Error    = io::Error;
 
     fn new_service(&self) -> Result<Self::Instance, Self::Error> {
-        Ok(Proxy { txs: self.txs.clone() })
+        let service = ProxyService {
+            routes: self.routes.clone(),
+        };
+
+        Ok(service)
     }
 }
 
+//fn check_connection(name: &str) -> Result<(), Error> {
+//    let mut core = Core::new()
+//        .expect("failed to initialize event loop");
+//    let service = cocaine::Service::new(name, &core.handle())
+//        .connect();
+//    Ok(())
+//}
+
 pub fn run(config: Config) -> Result<(), Box<Error>> {
-    // TODO: Init logging system.
+    let rlog = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
+
+//    let mlog = rlog.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
+//    slog_info!(mlog, "GET /help - information");
+//    slog_info!(mlog, "GET /ping - health checking");
+//    slog_info!(mlog, "GET /config - fetching configuration");
+//    slog_info!(mlog, "GET /metrics - fetching runtime metrics");
+//    slog_info!(mlog, "GET /severity - getting logging severity");
+//    slog_info!(mlog, "PUT /severity - setting logging severity");
+
+//    let ipaddr = config.addr().parse()
+//        .expect("failed to parse IP address");
+
+    let mlog = rlog.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
+    slog_info!(mlog, "XXX / - entry point for each request");
+
+    let slog = rlog.new(o!("🌳  Service" => "logging"));
+
+    // TODO: Check connection to logging service.
+    slog_info!(slog, "configured cloud logging with `proxy` prefix and `INFO` severity - all further logs will be written there");
+
+    // TODO: Check connection to unicorn service.
+
+    let ctx = LoggerContext::default();
+    let log = ctx.create("proxy/common");
 
     let mut txs = Vec::new();
     let mut threads = Vec::new();
@@ -399,15 +457,24 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
         threads.push(thread);
     }
 
-    let ipaddr = config.addr().parse()
-        .expect("failed to parse IP address");
-
-    let sockaddr = SocketAddr::new(ipaddr, config.port());
-    let mut srv = TcpServer::new(Http, sockaddr);
+    let addr = SocketAddr::new(config.addr().clone(), config.port());
+    let mut srv = TcpServer::new(Http, addr);
     srv.threads(config.threads().http());
 
-    let factory = ProxyFactory { txs: txs };
+    let mut routes = Vec::new();
+    routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
+    routes.push(Arc::new(GeobaseRoute { txs: txs }) as Arc<_>);
+
+    let factory = ProxyServiceFactory { routes: routes };
+
+//    log!(log, "started HTTP proxy at {}:{}", config.addr(), config.port());
     srv.serve(factory);
 
     Ok(())
 }
+
+// logging
+// [ ] Check logging service on start.
+// [ ] Write reconnection logs there.
+// [ ] Write access logs.
+// [ ] Check performance (into the file sink and into the null sink).

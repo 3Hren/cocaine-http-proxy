@@ -1,19 +1,26 @@
 #![feature(box_syntax)]
+#![feature(fnbox)]
 
 extern crate rand;
-#[macro_use] extern crate log;
+extern crate log;
 
-#[macro_use] extern crate clap;
+#[macro_use]
+extern crate clap;
 extern crate futures;
-#[macro_use] extern crate serde_derive;
+extern crate rmp_serde as rmps;
+extern crate rmpv;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_yaml;
+#[macro_use(o, slog_log, slog_info)]
+extern crate slog;
+extern crate slog_term;
 extern crate tokio_core;
 extern crate tokio_minihttp;
 extern crate tokio_proto;
 extern crate tokio_service;
 
-extern crate rmp_serde as rmps;
-extern crate rmpv;
+#[macro_use]
 extern crate cocaine;
 
 use clap::{App, Arg};
