@@ -13,9 +13,9 @@ monitoring:
   port: 10000
 
 # Locator endpoints.
-# These are passed directly into the cocaine-framework for service resolution. We also
-# assume that all of these locator(s) are identical, i.e. connected to the single discovery
-# component.
+# These are passed directly into the cocaine-framework for service resolution.
+# We also assume that all of these locator(s) are identical, i.e. connected to
+# the single discovery component.
 locators:
   - ["::", 10053]
 
@@ -27,7 +27,8 @@ logging:
   # For example, access logs will have the source field `<prefix>/access`.
   prefix: proxy
   # Severity filter.
-  # Logging events with severity less than specified will be dropped.
+  # Logging events with severity less than specified will be dropped. Allowed
+  # values are: [debug, info, warn, error].
   severity: info
 
 # Default pool size for applications.
