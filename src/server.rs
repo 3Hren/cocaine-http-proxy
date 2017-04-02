@@ -421,9 +421,6 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 //    slog_info!(mlog, "GET /severity - getting logging severity");
 //    slog_info!(mlog, "PUT /severity - setting logging severity");
 
-//    let ipaddr = config.addr().parse()
-//        .expect("failed to parse IP address");
-
     let mlog = rlog.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
     slog_info!(mlog, "XXX / - entry point for each request");
 
