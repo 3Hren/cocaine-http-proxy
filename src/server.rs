@@ -424,6 +424,8 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
         .map(|&(addr, port)| SocketAddr::new(addr.clone(), port))
         .collect::<Vec<SocketAddr>>();
 
+    let addr = SocketAddr::new(config.addr().clone(), config.port());
+
     let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
 
 //    let log = root_log.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
@@ -434,7 +436,7 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 //    slog_info!(log, "GET /severity - getting logging severity");
 //    slog_info!(log, "PUT /severity - setting logging severity");
 
-    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
+    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
     slog_info!(log, "XXX / - entry point for each request");
 
     let log = root_log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
@@ -475,7 +477,6 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
         threads.push(thread);
     }
 
-    let addr = SocketAddr::new(config.addr().clone(), config.port());
     let mut srv = TcpServer::new(Http, addr);
     srv.threads(config.threads().http());
 
