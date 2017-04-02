@@ -34,7 +34,7 @@ pub struct Config {
     addr: IpAddr,
     port: u16,
     threads: ThreadConfig,
-    locators:  Vec<(IpAddr, u16)>,
+    locators: Vec<(IpAddr, u16)>,
 }
 
 impl Config {
@@ -61,5 +61,9 @@ impl Config {
 
     pub fn threads(&self) -> &ThreadConfig {
         &self.threads
+    }
+
+    pub fn locators(&self) -> &Vec<(IpAddr, u16)> {
+        &self.locators
     }
 }

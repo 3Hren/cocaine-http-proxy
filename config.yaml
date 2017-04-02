@@ -12,11 +12,18 @@ monitoring:
   addr: "::"
   port: 10000
 
+# Locator endpoints.
+# These are passed directly into the cocaine-framework for service resolution. We also
+# assume that all of these locator(s) are identical, i.e. connected to the single discovery
+# component.
+locators:
+  - ["::", 10053]
+
 # Logging settings. All logs are written directly into the logging service.
 logging:
   # Service name into which all logging will be redirected.
-  name: logging
-  # Base prefix.
+  name: proxy
+  # Source prefix.
   # For example, access logs will have the source field `<prefix>/access`.
   prefix: proxy
   # Severity filter.
@@ -29,8 +36,3 @@ pool: 10
 app:
   echo:
     pool: 4
-
-# Locator endpoints.
-locators:
-  - ["::1", 10053]
-  - ["127.0.0.1", 10053]

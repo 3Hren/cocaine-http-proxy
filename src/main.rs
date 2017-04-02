@@ -1,5 +1,4 @@
-#![feature(box_syntax)]
-#![feature(fnbox)]
+#![feature(box_syntax, fnbox)]
 
 extern crate rand;
 extern crate log;
@@ -12,13 +11,14 @@ extern crate rmpv;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
-#[macro_use(o, slog_log, slog_info)]
+#[macro_use(o, slog_log, slog_info, slog_warn)]
 extern crate slog;
 extern crate slog_term;
 extern crate tokio_core;
 extern crate tokio_minihttp;
 extern crate tokio_proto;
 extern crate tokio_service;
+extern crate itertools;
 
 #[macro_use]
 extern crate cocaine;
@@ -35,20 +35,17 @@ fn main() {
         .version(crate_version!())
         .author(crate_authors!())
         .arg(Arg::with_name("config")
-            .short("c")
-            .long("config")
-            .required(true)
-            .value_name("FILE")
-            .help("Path to the configuration file")
-            .takes_value(true))
+                 .short("c")
+                 .long("config")
+                 .required(true)
+                 .value_name("FILE")
+                 .help("Path to the configuration file")
+                 .takes_value(true))
         .get_matches();
 
-    let path = matches.value_of("config")
-        .expect("failed to extract configuration path");
+    let path = matches.value_of("config").expect("failed to extract configuration path");
 
-    let config = Config::from(path)
-        .expect("failed to read configuration file");
+    let config = Config::from(path).expect("failed to read configuration file");
 
-    server::run(config)
-        .expect("failed to run the server");
+    server::run(config).expect("failed to run the server");
 }

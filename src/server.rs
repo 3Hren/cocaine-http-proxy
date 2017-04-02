@@ -6,10 +6,11 @@
 // TODO: show info about service pool. Draw cluster map. Count response times.
 
 use std;
+use std::borrow::Cow;
 use std::boxed::FnBox;
 use std::collections::HashMap;
 use std::io::{self, ErrorKind};
-use std::net::SocketAddr;
+use std::net::{SocketAddr};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -22,6 +23,7 @@ use tokio_core::reactor::{Core, Handle};
 use tokio_minihttp::{Request, Response, Http};
 use tokio_proto::TcpServer;
 use tokio_service::{Service, NewService};
+use itertools::Itertools;
 
 use slog;
 use slog_term;
@@ -29,7 +31,7 @@ use slog::DrainExt;
 
 use rmps;
 use rmpv::ValueRef;
-use cocaine::{self, Dispatch, Error};
+use cocaine::{self, Builder, Dispatch, Error};
 use cocaine::protocol::{self, Flatten};
 use cocaine::logging::{LoggerContext, Sev};
 
@@ -402,16 +404,26 @@ impl NewService for ProxyServiceFactory {
     }
 }
 
-//fn check_connection(name: &str) -> Result<(), Error> {
-//    let mut core = Core::new()
-//        .expect("failed to initialize event loop");
-//    let service = cocaine::Service::new(name, &core.handle())
-//        .connect();
-//    Ok(())
-//}
+fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>) -> Result<(), Error>
+    where N: Into<Cow<'static, str>>
+{
+    let mut core = Core::new()
+        .expect("failed to initialize event loop");
+
+    let service = Builder::new(name)
+        .locator_addrs(locator_addrs)
+        .build(&core.handle());
+
+    core.run(service.connect())
+}
 
 pub fn run(config: Config) -> Result<(), Box<Error>> {
-    let rlog = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
+    let locator_addrs = config.locators()
+        .iter()
+        .map(|&(addr, port)| SocketAddr::new(addr.clone(), port))
+        .collect::<Vec<SocketAddr>>();
+
+    let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
 
 //    let mlog = rlog.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
 //    slog_info!(mlog, "GET /help - information");
@@ -421,13 +433,21 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 //    slog_info!(mlog, "GET /severity - getting logging severity");
 //    slog_info!(mlog, "PUT /severity - setting logging severity");
 
-    let mlog = rlog.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
-    slog_info!(mlog, "XXX / - entry point for each request");
+    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
+    slog_info!(log, "XXX / - entry point for each request");
 
-    let slog = rlog.new(o!("🌳  Service" => "logging"));
+    let log = root_log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
+    if let Ok(..) = check_connection("locator", locator_addrs.clone()) {
+        slog_info!(log, "configured cloud entry points using locator(s) specified above");
+    } else {
+        slog_warn!(log, "failed to establish connection to the locator(s) specified above - ensure \
+            that `cocaine-runtime` is running and the `locator` is properly configured");
+    }
+
+    let log = root_log.new(o!("Service" => "logging"));
 
     // TODO: Check connection to logging service.
-    slog_info!(slog, "configured cloud logging with `proxy` prefix and `INFO` severity - all further logs will be written there");
+    slog_info!(log, "configured cloud logging with `proxy` prefix and `INFO` severity - all further logs will be written there");
 
     // TODO: Check connection to unicorn service.
 
