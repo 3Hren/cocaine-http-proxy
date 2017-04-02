@@ -440,8 +440,8 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
     if let Ok(..) = check_connection("locator", locator_addrs.clone()) {
         slog_info!(log, "configured cloud entry points using locator(s) specified above");
     } else {
-        slog_warn!(log, "failed to establish connection to the locator(s) specified above - ensure \
-            that `cocaine-runtime` is running and the `locator` is properly configured");
+        slog_warn!(log, "failed to establish connection to the locator(s) specified above - \
+            ensure that `cocaine-runtime` is running and the `locator` is properly configured");
     }
 
     let log = root_log.new(o!("Service" => "logging"));
