@@ -426,13 +426,13 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
 
-//    let mlog = rlog.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
-//    slog_info!(mlog, "GET /help - information");
-//    slog_info!(mlog, "GET /ping - health checking");
-//    slog_info!(mlog, "GET /config - fetching configuration");
-//    slog_info!(mlog, "GET /metrics - fetching runtime metrics");
-//    slog_info!(mlog, "GET /severity - getting logging severity");
-//    slog_info!(mlog, "PUT /severity - setting logging severity");
+//    let log = root_log.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
+//    slog_info!(log, "GET /help - information");
+//    slog_info!(log, "GET /ping - health checking");
+//    slog_info!(log, "GET /config - fetching configuration");
+//    slog_info!(log, "GET /metrics - fetching runtime metrics");
+//    slog_info!(log, "GET /severity - getting logging severity");
+//    slog_info!(log, "PUT /severity - setting logging severity");
 
     let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}:{}", config.addr(), config.port())));
     slog_info!(log, "XXX / - entry point for each request");
