@@ -13,7 +13,7 @@ use std::io::{self, ErrorKind};
 use std::net::{SocketAddr};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use rand;
 
@@ -33,7 +33,7 @@ use rmps;
 use rmpv::ValueRef;
 use cocaine::{self, Builder, Dispatch, Error};
 use cocaine::protocol::{self, Flatten};
-use cocaine::logging::LoggerContext;
+use cocaine::logging::{Logger, LoggerContext, Severity};
 
 use config::Config;
 
@@ -79,6 +79,7 @@ impl Route for MainRoute {
                         response: Some(Response::new()),
                     })
                     .and_then(|tx| {
+                        // TODO: Proper arguments.
                         let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
                         tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
                         tx.send(2, &[0; 0]);
@@ -109,15 +110,16 @@ impl Route for MainRoute {
 
 struct GeobaseRoute {
     txs: Vec<mpsc::UnboundedSender<Event>>,
+    log: Logger,
 }
 
 impl Route for GeobaseRoute {
     type Future = Box<Future<Item = Response, Error = io::Error>>;
 
-    fn process(&self, _req: &Request) -> Option<Self::Future> {
+    fn process(&self, request: &Request) -> Option<Self::Future> {
         let (tx, rx) = oneshot::channel();
         let x = rand::random::<usize>();
-        // let birth = Instant::now();
+        let birth = Instant::now();
         let rolled = x % self.txs.len();
         self.txs[rolled].send(("geobase".into(), box move |service: &cocaine::Service| {
             let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
@@ -128,13 +130,25 @@ impl Route for GeobaseRoute {
             future.boxed()
         })).unwrap();
 
-        let future = rx.and_then(move |mut response| {
+        let log = self.log.clone();
+        let method = request.method().to_owned();
+        let path = request.path().to_owned();
+        let version = format!("HTTP/1.{}", request.version());
+        let future = rx.and_then(move |(mut response, status, bytes_sent)| {
             response.header("X-Powered-By", "Cocaine");
 
-            // TODO: Write to `proxy/access` logs.
-            // let elapsed = birth.elapsed();
-            // info!("request finished [{:#018.18x}] in {:.3} ms", x, (elapsed.as_secs() *
-            // 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6);
+            let elapsed = birth.elapsed();
+            let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
+
+            log!(log, Severity::Info, "request finished in {:.3} ms", [elapsed_ms], {
+                request_id: x,
+                duration: elapsed_ms,
+                method: method,
+                path: path,
+                version: version,
+                status: status,
+                bytes_sent: bytes_sent,
+            });
 
             Ok(response)
         }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
@@ -180,41 +194,41 @@ impl Service for ProxyService {
 // }
 
 struct SingleChunkReadDispatch {
-    tx: oneshot::Sender<Response>,
+    tx: oneshot::Sender<(Response, u32, u64)>,
 }
 
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
         let mut response = Response::new();
 
-        match ty {
+        let (code, status, body) = match ty {
             0 => {
-                response.status_code(200, "OK");
-                response.body(&format!("{}", data));
+                (200, "OK", format!("{}", data))
             }
             1 => {
-                let mut response = Response::new();
-                response.status_code(500, "Internal Server Error");
-                response.body(&format!("{}", data));
+                (500, "Internal Server Error", format!("{}", data))
             }
             m => {
-                let mut response = Response::new();
-                response.status_code(500, "Internal Server Error");
-                response.body(&format!("unknown type: {} {}", m, data));
+                (500, "Internal Server Error", format!("unknown type: {} {}", m, data))
             }
-        }
+        };
 
-        drop(self.tx.send(response));
+        response.status_code(code, status);
+        response.body(&body);
+
+        drop(self.tx.send((response, code, body.as_bytes().len() as u64)));
 
         None
     }
 
     fn discard(self: Box<Self>, err: &Error) {
+        let body = &format!("{}", err);
+
         let mut response = Response::new();
         response.status_code(500, "Internal Server Error");
-        response.body(&format!("{}", err));
+        response.body(&body);
 
-        drop(self.tx.send(response));
+        drop(self.tx.send((response, 500, body.as_bytes().len() as u64)));
     }
 }
 
@@ -447,15 +461,20 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
             ensure that `cocaine-runtime` is running and the `locator` is properly configured");
     }
 
-    let log = root_log.new(o!("Service" => "logging"));
-
-    // TODO: Check connection to logging service.
-    slog_info!(log, "configured cloud logging with `proxy` prefix and `INFO` severity - all further logs will be written there");
+    let log = root_log.new(o!("Service" => "logging", "name" => config.logging().name().to_string()));
+    if let Ok(..) = check_connection(config.logging().name().to_string(), locator_addrs.clone()) {
+        slog_info!(log, "configured cloud logging `{}` prefix and `{}` severity - \
+            all further logs will be written there", config.logging().prefix(), config.logging().severity());
+    } else {
+        slog_warn!(log, "failed to establish connection to the logging service");
+    }
 
     // TODO: Check connection to unicorn service.
 
-    let ctx = LoggerContext::default();
-    let log = ctx.create("proxy/common");
+    let ctx = LoggerContext::new(config.logging().name().to_owned());
+    ctx.filter().set(config.logging().severity().into());
+
+    let log = ctx.create(format!("{}/common", config.logging().prefix()));
 
     let mut txs = Vec::new();
     let mut threads = Vec::new();
@@ -482,18 +501,19 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     let mut routes = Vec::new();
     routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
-    routes.push(Arc::new(GeobaseRoute { txs: txs }) as Arc<_>);
+    routes.push(Arc::new(GeobaseRoute {
+        txs: txs,
+        log: ctx.create(format!("{}/access", config.logging().prefix())),
+    }) as Arc<_>);
 
     let factory = ProxyServiceFactory { routes: routes };
 
-//    log!(log, "started HTTP proxy at {}:{}", config.addr(), config.port());
+    log!(log, Severity::Info, "started HTTP proxy at {}:{}", config.addr(), config.port());
     srv.serve(factory);
 
     Ok(())
 }
 
 // logging
-// [ ] Check logging service on start.
 // [ ] Write reconnection logs there.
-// [ ] Write access logs.
 // [ ] Check performance (into the file sink and into the null sink).

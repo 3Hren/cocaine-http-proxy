@@ -8,9 +8,11 @@ extern crate clap;
 extern crate futures;
 extern crate rmp_serde as rmps;
 extern crate rmpv;
+extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
+
 #[macro_use(o, slog_log, slog_info, slog_warn)]
 extern crate slog;
 extern crate slog_term;

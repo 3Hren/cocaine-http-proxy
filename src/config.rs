@@ -2,8 +2,12 @@ use std::error::Error;
 use std::fs::File;
 use std::path::Path;
 use std::net::IpAddr;
+use std::str::FromStr;
 
 use serde_yaml;
+use serde::de::{self, Deserialize, Deserializer};
+
+use cocaine::logging::Severity;
 
 #[derive(Deserialize)]
 pub struct ThreadConfig {
@@ -29,12 +33,42 @@ impl ThreadConfig {
     }
 }
 
+fn deserialize_from_str<D>(de: D) -> Result<Severity, D::Error>
+    where D: Deserializer
+{
+    let s: String = Deserialize::deserialize(de)?;
+    Severity::from_str(&s).map_err(de::Error::custom)
+}
+
+#[derive(Deserialize)]
+pub struct LoggingConfig {
+    name: String,
+    prefix: String,
+    #[serde(deserialize_with = "deserialize_from_str")]
+    severity: Severity,
+}
+
+impl LoggingConfig {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub fn severity(&self) -> Severity {
+        self.severity
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Config {
     addr: IpAddr,
     port: u16,
     threads: ThreadConfig,
     locators: Vec<(IpAddr, u16)>,
+    logging: LoggingConfig,
 }
 
 impl Config {
@@ -65,5 +99,9 @@ impl Config {
 
     pub fn locators(&self) -> &Vec<(IpAddr, u16)> {
         &self.locators
+    }
+
+    pub fn logging(&self) -> &LoggingConfig {
+        &self.logging
     }
 }
