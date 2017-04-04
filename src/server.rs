@@ -47,8 +47,8 @@ trait Route: Send + Sync {
     ///
     /// A route can process the request fully if all conditions are met, for example if it requires
     /// some headers and all of them are specified.
-    /// Also it may decide to fail the request, because of incomplete prerequests, for example if
-    /// it detects all required headers, but failes to match the request method.
+    /// Also it may decide to fail the request, because of incomplete prerequisites, for example if
+    /// it detects all required headers, but fails to match the request method.
     /// At last a route can be neutral to the request, returning `None`.
     fn process(&self, request: &Request) -> Option<Self::Future>;
 }
