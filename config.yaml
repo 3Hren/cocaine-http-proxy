@@ -1,5 +1,5 @@
 # IP address for HTTP listeners to bind on.
-addr: "::1"
+addr: "::"
 
 # Port for HTTP listeners to bind on.
 port: 8080
@@ -22,7 +22,7 @@ locators:
 # Logging settings. All logs are written directly into the logging service.
 logging:
   # Service name into which all logging will be redirected.
-  name: proxy
+  name: logging-proxy
   # Source prefix.
   # For example, access logs will have the source field `<prefix>/access`.
   prefix: proxy
