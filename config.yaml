@@ -15,7 +15,7 @@ threads:
 # Locator endpoints.
 # These are passed directly into the cocaine-framework for service resolution.
 # We also assume that all of these locator(s) are identical, i.e. connected to
-# the single discovery component.
+# a single discovery component.
 locators:
   - ["::", 10053]
 
