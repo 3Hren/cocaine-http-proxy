@@ -47,7 +47,7 @@ fn main() {
 
     let path = matches.value_of("config").expect("failed to extract configuration path");
 
-    let config = Config::from(path).expect("failed to read configuration file");
+    let config = Config::load(path).expect("failed to load configuration");
 
     server::run(config).expect("failed to run the server");
 }

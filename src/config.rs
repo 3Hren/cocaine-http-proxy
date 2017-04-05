@@ -72,7 +72,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from<P: AsRef<Path>>(path: P) -> Result<Config, Box<Error>> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, Box<Error>> {
         let cfg = serde_yaml::from_reader(&File::open(path)?)?;
 
         Config::sanitize(&cfg)?;
