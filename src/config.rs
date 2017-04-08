@@ -62,6 +62,22 @@ impl LoggingConfig {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MonitoringConfig {
+    addr: IpAddr,
+    port: u16,
+}
+
+impl MonitoringConfig {
+    pub fn addr(&self) -> &IpAddr {
+        &self.addr
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Config {
     addr: IpAddr,
@@ -69,6 +85,7 @@ pub struct Config {
     threads: ThreadConfig,
     locators: Vec<(IpAddr, u16)>,
     logging: LoggingConfig,
+    monitoring: MonitoringConfig,
 }
 
 impl Config {
@@ -103,5 +120,9 @@ impl Config {
 
     pub fn logging(&self) -> &LoggingConfig {
         &self.logging
+    }
+
+    pub fn monitoring(&self) -> &MonitoringConfig {
+        &self.monitoring
     }
 }

@@ -1,5 +1,5 @@
 # IP address for HTTP listeners to bind on.
-addr: "::"
+addr: "::1"
 
 # Port for HTTP listeners to bind on.
 port: 8080
@@ -8,9 +8,9 @@ threads:
   http: 8
   network: 16
 
-#monitoring:
-#  addr: "::"
-#  port: 10000
+monitoring:
+  addr: "::1"
+  port: 10000
 
 # Locator endpoints.
 # These are passed directly into the cocaine-framework for service resolution.

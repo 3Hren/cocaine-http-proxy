@@ -9,7 +9,9 @@ use std;
 use std::borrow::Cow;
 use std::boxed::FnBox;
 use std::collections::HashMap;
+use std::error;
 use std::io::{self, ErrorKind};
+use std::mem;
 use std::net::{SocketAddr};
 use std::sync::Arc;
 use std::thread;
@@ -108,6 +110,41 @@ impl Route for MainRoute {
     }
 }
 
+struct AccessLogger {
+    birth: Instant,
+    method: String,
+    path: String,
+    version: String,
+    log: Logger,
+}
+
+impl AccessLogger {
+    fn new(log: Logger, req: &Request) -> Self {
+        Self {
+            birth: Instant::now(),
+            method: req.method().to_owned(),
+            path: req.path().to_owned(),
+            version: format!("HTTP/1.{}", req.version()),
+            log: log,
+        }
+    }
+
+    fn commit(self, trace: usize, status: u32, bytes_sent: u64) {
+        let elapsed = self.birth.elapsed();
+        let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
+
+        cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", [elapsed_ms], {
+            request_id: trace,
+            duration: elapsed_ms / 1000.0,
+            method: self.method,
+            path: self.path,
+            version: self.version,
+            status: status,
+            bytes_sent: bytes_sent,
+        });
+    }
+}
+
 struct GeobaseRoute {
     txs: Vec<mpsc::UnboundedSender<Event>>,
     log: Logger,
@@ -116,10 +153,9 @@ struct GeobaseRoute {
 impl Route for GeobaseRoute {
     type Future = Box<Future<Item = Response, Error = io::Error>>;
 
-    fn process(&self, request: &Request) -> Option<Self::Future> {
+    fn process(&self, req: &Request) -> Option<Self::Future> {
         let (tx, rx) = oneshot::channel();
         let x = rand::random::<usize>();
-        let birth = Instant::now();
         let rolled = x % self.txs.len();
         self.txs[rolled].send(("geobase".into(), box move |service: &cocaine::Service| {
             let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
@@ -130,27 +166,11 @@ impl Route for GeobaseRoute {
             future.boxed()
         })).unwrap();
 
-        let log = self.log.clone();
-        let method = request.method().to_owned();
-        let path = request.path().to_owned();
-        let version = format!("HTTP/1.{}", request.version());
-        let future = rx.and_then(move |(mut response, status, bytes_sent)| {
-            response.header("X-Powered-By", "Cocaine");
-
-            let elapsed = birth.elapsed();
-            let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
-
-            log!(log, Severity::Info, "request finished in {:.3} ms", [elapsed_ms], {
-                request_id: x,
-                duration: elapsed_ms,
-                method: method,
-                path: path,
-                version: version,
-                status: status,
-                bytes_sent: bytes_sent,
-            });
-
-            Ok(response)
+        let log = AccessLogger::new(self.log.clone(), req);
+        let future = rx.and_then(move |(mut res, status, bytes_sent)| {
+            res.header("X-Powered-By", "Cocaine");
+            log.commit(x, status, bytes_sent);
+            Ok(res)
         }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
 
         Some(future.boxed())
@@ -199,8 +219,6 @@ struct SingleChunkReadDispatch {
 
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        let mut response = Response::new();
-
         let (code, status, body) = match ty {
             0 => {
                 (200, "OK", format!("{}", data))
@@ -213,10 +231,11 @@ impl Dispatch for SingleChunkReadDispatch {
             }
         };
 
-        response.status_code(code, status);
-        response.body(&body);
+        let mut res = Response::new();
+        res.status_code(code, status);
+        res.body(&body);
 
-        drop(self.tx.send((response, code, body.as_bytes().len() as u64)));
+        drop(self.tx.send((res, code, body.as_bytes().len() as u64)));
 
         None
     }
@@ -224,11 +243,11 @@ impl Dispatch for SingleChunkReadDispatch {
     fn discard(self: Box<Self>, err: &Error) {
         let body = &format!("{}", err);
 
-        let mut response = Response::new();
-        response.status_code(500, "Internal Server Error");
-        response.body(&body);
+        let mut res = Response::new();
+        res.status_code(500, "Internal Server Error");
+        res.body(&body);
 
-        drop(self.tx.send((response, 500, body.as_bytes().len() as u64)));
+        drop(self.tx.send((res, 500, body.as_bytes().len() as u64)));
     }
 }
 
@@ -239,7 +258,7 @@ struct AppReadDispatch {
 }
 
 #[derive(Deserialize)]
-struct MetaInfo{
+struct MetaInfo {
     code: u32,
     headers: Vec<(String, String)>
 }
@@ -252,12 +271,12 @@ impl Dispatch for AppReadDispatch {
             Ok(Some(data)) => {
                 if self.body.is_none() {
                     let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
-                    let mut response = self.response.take().unwrap();
-                    response.status_code(meta.code, "OK");
+                    let mut res = self.response.take().unwrap();
+                    res.status_code(meta.code, "OK");
                     for &(ref name, ref value) in &meta.headers {
-                        response.header(&name, &value);
+                        res.header(&name, &value);
                     }
-                    self.response = Some(response);
+                    self.response = Some(res);
                     self.body = Some(Vec::with_capacity(64));
                 } else {
                     self.body.as_mut().unwrap().extend(data.as_bytes());
@@ -265,27 +284,27 @@ impl Dispatch for AppReadDispatch {
                 Some(self)
             }
             Ok(None) => {
-                let mut response = self.response.take().unwrap();
-                response.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
-                drop(self.tx.send(response));
+                let mut res = self.response.take().unwrap();
+                res.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
+                drop(self.tx.send(res));
                 None
             }
             Err(err) => {
-                let mut response = Response::new();
-                response.status_code(500, "Internal Server Error");
-                response.body(&format!("{}", err));
-                drop(self.tx.send(response));
+                let mut res = Response::new();
+                res.status_code(500, "Internal Server Error");
+                res.body(&format!("{}", err));
+                drop(self.tx.send(res));
                 None
             }
         }
     }
 
     fn discard(self: Box<Self>, err: &Error) {
-        let mut response = Response::new();
-        response.status_code(500, "Internal Server Error");
-        response.body(&format!("{}", err));
+        let mut res = Response::new();
+        res.status_code(500, "Internal Server Error");
+        res.body(&format!("{}", err));
 
-        drop(self.tx.send(response));
+        drop(self.tx.send(res));
     }
 }
 
@@ -327,18 +346,18 @@ impl ServicePool {
 
             let mut killed = 0;
 
-            for id in 0..self.services.len() {
-                let (.., birth) = self.services[id];
-                if now.duration_since(birth).unwrap() > self.threshold {
+            let kill_limit = self.services.len() / 2;
+            for &mut (ref mut service, ref mut birth) in self.services.iter_mut() {
+                if now.duration_since(*birth).unwrap() > self.threshold {
                     killed += 1;
-                    self.services[id] = (cocaine::Service::new(self.name.clone(), &self.handle), now);
-                }
+                    mem::replace(birth, now);
+                    mem::replace(service, cocaine::Service::new(self.name.clone(), &self.handle));
 
-                if killed > self.services.len() / 2 {
-                    break;
+                    if killed > kill_limit {
+                        break;
+                    }
                 }
-
-                // TODO: Tiny preconnection optimization.
+                // TODO: Tiny pre-connection optimizations.
             }
         }
 
@@ -387,11 +406,14 @@ impl Future for Infinity {
 
                     handle.spawn(func.call_box((service,)));
                 }
+                // TODO: RG updates.
+                // TODO: Unicorn timeout updates.
+                // TODO: Unicorn tracing chance updates.
                 Ok(Async::NotReady) => {
                     break;
                 }
                 Ok(Async::Ready(None)) | Err(..) => {
-                    unreachable!();
+                    return Ok(Async::Ready(()));
                 }
             }
         }
@@ -423,7 +445,7 @@ fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>) -> Result<(), Er
     where N: Into<Cow<'static, str>>
 {
     let mut core = Core::new()
-        .expect("failed to initialize event loop");
+        .map_err(Error::Io)?;
 
     let service = Builder::new(name)
         .locator_addrs(locator_addrs)
@@ -432,41 +454,55 @@ fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>) -> Result<(), Er
     core.run(service.connect())
 }
 
-pub fn run(config: Config) -> Result<(), Box<Error>> {
+const CONFIG_LOCATOR_SUCC: &str = "configured cloud entry points using locator(s) specified above";
+const CONFIG_LOCATOR_FAIL: &str = "failed to establish connection to the locator(s) specified above - ensure that `cocaine-runtime` is running and the `locator` is properly configured";
+
+const CONFIG_LOGGING_FAIL: &str = "failed to establish connection to the logging service";
+
+pub struct Server {}
+
+impl Server {
+    pub fn new(config: Config) -> Self {
+        unimplemented!();
+    }
+
+    pub fn run(self) -> Result<(), Box<Error>> {
+        unimplemented!();
+    }
+}
+
+use monitoring::MonitoringServer;
+
+pub fn run(config: Config) -> Result<(), Box<error::Error>> {
+    // NOTE: Create and run monitoring server if needed.
+    let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
+
+    let addr = SocketAddr::new(config.monitoring().addr().clone(), config.monitoring().port());
+    let log = root_log.new(o!("🚀  Mount" => format!("monitoring server on {}", addr)));
+    slog_info!(log, "for more information about monitoring API visit `GET http://{}/help`", addr);
+    MonitoringServer::new(addr).run().unwrap();
+
+    // NOTE: Create and run HTTP proxy.
+    let addr = SocketAddr::new(config.addr().clone(), config.port());
+    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
+    slog_info!(log, "cocaine http proxy server is ready");
+
     let locator_addrs = config.locators()
         .iter()
         .map(|&(addr, port)| SocketAddr::new(addr.clone(), port))
         .collect::<Vec<SocketAddr>>();
-
-    let addr = SocketAddr::new(config.addr().clone(), config.port());
-
-    let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
-
-//    let log = root_log.new(o!("🚀  Mount" => "monitoring server on [::]:10000"));
-//    slog_info!(log, "GET /help - information");
-//    slog_info!(log, "GET /ping - health checking");
-//    slog_info!(log, "GET /config - fetching configuration");
-//    slog_info!(log, "GET /metrics - fetching runtime metrics");
-//    slog_info!(log, "GET /severity - getting logging severity");
-//    slog_info!(log, "PUT /severity - setting logging severity");
-
-    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
-    slog_info!(log, "XXX / - entry point for each request");
-
     let log = root_log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
     if let Ok(..) = check_connection("locator", locator_addrs.clone()) {
-        slog_info!(log, "configured cloud entry points using locator(s) specified above");
+        slog_info!(log, CONFIG_LOCATOR_SUCC);
     } else {
-        slog_warn!(log, "failed to establish connection to the locator(s) specified above - \
-            ensure that `cocaine-runtime` is running and the `locator` is properly configured");
+        slog_warn!(log, CONFIG_LOCATOR_FAIL);
     }
 
     let log = root_log.new(o!("Service" => "logging", "name" => config.logging().name().to_string()));
     if let Ok(..) = check_connection(config.logging().name().to_string(), locator_addrs.clone()) {
-        slog_info!(log, "configured cloud logging `{}` prefix and `{}` severity - \
-            all further logs will be written there", config.logging().prefix(), config.logging().severity());
+        slog_info!(log, "configured cloud logging `{}` prefix and `{}` severity - all further logs will be written there", config.logging().prefix(), config.logging().severity());
     } else {
-        slog_warn!(log, "failed to establish connection to the logging service");
+        slog_warn!(log, CONFIG_LOGGING_FAIL);
     }
 
     // TODO: Check connection to unicorn service.
@@ -481,16 +517,13 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     for tid in 0..config.threads().network() {
         let (tx, rx) = mpsc::unbounded();
-        let thread = thread::Builder::new()
-            .name(format!("W#{:02}", tid))
-            .spawn(move ||
-        {
+        let thread = thread::Builder::new().name(format!("worker {:02}", tid)).spawn(move || {
             let mut core = Core::new()
                 .expect("failed to initialize event loop");
             let handle = core.handle();
 
             core.run(Infinity::new(handle, rx)).unwrap();
-        });
+        })?;
 
         txs.push(tx);
         threads.push(thread);
@@ -508,12 +541,8 @@ pub fn run(config: Config) -> Result<(), Box<Error>> {
 
     let factory = ProxyServiceFactory { routes: routes };
 
-    log!(log, Severity::Info, "started HTTP proxy at {}:{}", config.addr(), config.port());
+    cocaine_log!(log, Severity::Info, "started HTTP proxy at {}:{}", config.addr(), config.port());
     srv.serve(factory);
 
     Ok(())
 }
-
-// logging
-// [ ] Write reconnection logs there.
-// [ ] Check performance (into the file sink and into the null sink).
