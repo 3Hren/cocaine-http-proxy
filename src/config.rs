@@ -33,24 +33,40 @@ impl NetworkConfig {
 }
 
 #[derive(Deserialize)]
-pub struct LoggingConfig {
+pub struct LoggingBaseConfig {
     name: String,
-    prefix: String,
+    source: String,
     #[serde(deserialize_with = "deserialize_from_str")]
     severity: Severity,
 }
 
-impl LoggingConfig {
+impl LoggingBaseConfig {
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn prefix(&self) -> &str {
-        &self.prefix
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     pub fn severity(&self) -> Severity {
         self.severity
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoggingConfig {
+    common: LoggingBaseConfig,
+    access: LoggingBaseConfig,
+}
+
+impl LoggingConfig {
+    pub fn common(&self) -> &LoggingBaseConfig {
+        &self.common
+    }
+
+    pub fn access(&self) -> &LoggingBaseConfig {
+        &self.access
     }
 }
 
@@ -89,10 +105,6 @@ impl Config {
         }
 
         Ok(())
-    }
-
-    pub fn addr(&self) -> &(IpAddr, u16) {
-        &self.network.addr
     }
 
     pub fn network(&self) -> &NetworkConfig {

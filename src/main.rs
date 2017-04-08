@@ -17,7 +17,6 @@ extern crate serde_yaml;
 extern crate slog;
 extern crate slog_term;
 extern crate tokio_core;
-extern crate tokio_minihttp;
 extern crate tokio_proto;
 extern crate tokio_service;
 extern crate itertools;

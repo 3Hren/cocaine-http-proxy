@@ -1,6 +1,5 @@
 //! It is unclear what type of HTTP backend will be chosen finally.
 
-// TODO: unix/ping -> health check.
 // TODO: unix/config -> dump config (often config file changes, but daemon not restarted).
 // TODO: unix/metrics -> dump metrics.
 // TODO: show info about service pool. Draw cluster map. Count response times.
@@ -21,7 +20,7 @@ use net2::TcpBuilder;
 use rand;
 use futures::{future, Async, Future, Poll, Stream};
 use futures::sync::{oneshot, mpsc};
-use hyper::{self, Method, StatusCode};
+use hyper::{self, StatusCode};
 use hyper::server::{Http, Request, Response};
 use itertools::Itertools;
 use tokio_core::net::{TcpListener, TcpStream};
@@ -39,7 +38,7 @@ use cocaine::{self, Builder, Dispatch, Error};
 use cocaine::protocol::{self, Flatten};
 use cocaine::logging::{Logger, LoggerContext, Severity};
 
-use config::Config;
+use config::{Config, LoggingBaseConfig};
 
 type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
 
@@ -183,12 +182,6 @@ struct ProxyService {
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
-impl ProxyService {
-    fn not_found(&self) -> Response {
-        Response::new().with_status(StatusCode::NotFound)
-    }
-}
-
 impl Service for ProxyService {
     type Request  = Request;
     type Response = Response;
@@ -202,15 +195,13 @@ impl Service for ProxyService {
             }
         }
 
-        future::ok(self.not_found()).boxed()
+        future::ok(Response::new().with_status(StatusCode::NotFound)).boxed()
     }
 }
 
-// impl Drop for Proxy {
-//     fn drop(&mut self) {
-//         println!("dropped");
-//     }
-// }
+impl Drop for ProxyService {
+    fn drop(&mut self) {}
+}
 
 struct SingleChunkReadDispatch {
     tx: oneshot::Sender<(Response, u32, u64)>,
@@ -218,15 +209,15 @@ struct SingleChunkReadDispatch {
 
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        let (code, status, body) = match ty {
+        let (code, body) = match ty {
             0 => {
-                (200, "OK", format!("{}", data))
+                (200, format!("{}", data))
             }
             1 => {
-                (500, "Internal Server Error", format!("{}", data))
+                (500, format!("{}", data))
             }
             m => {
-                (500, "Internal Server Error", format!("unknown type: {} {}", m, data))
+                (500, format!("unknown type: {} {}", m, data))
             }
         };
 
@@ -460,8 +451,6 @@ fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>) -> Result<(), Er
 const CONFIG_LOCATOR_SUCC: &str = "configured cloud entry points using locator(s) specified above";
 const CONFIG_LOCATOR_FAIL: &str = "failed to establish connection to the locator(s) specified above - ensure that `cocaine-runtime` is running and the `locator` is properly configured";
 
-const CONFIG_LOGGING_FAIL: &str = "failed to establish connection to the logging service";
-
 use monitoring::MonitoringServer;
 
 struct HttpService {
@@ -505,7 +494,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     MonitoringServer::new(addr).run().unwrap();
 
     // NOTE: Create and run HTTP proxy.
-    let (addr, port) = config.addr().clone();
+    let (addr, port) = config.network().addr().clone();
     let addr = SocketAddr::new(addr, port);
     let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
     slog_info!(log, "cocaine http proxy server is ready");
@@ -521,19 +510,34 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         slog_warn!(log, CONFIG_LOCATOR_FAIL);
     }
 
-    let log = root_log.new(o!("Service" => "logging", "name" => config.logging().name().to_string()));
-    if let Ok(..) = check_connection(config.logging().name().to_string(), locator_addrs.clone()) {
-        slog_info!(log, "configured cloud logging `{}` prefix and `{}` severity - all further logs will be written there", config.logging().prefix(), config.logging().severity());
-    } else {
-        slog_warn!(log, CONFIG_LOGGING_FAIL);
+    let log = root_log.new(o!("Service" => "logging"));
+    for &(ty, ref cfg) in &[("common", config.logging().common()), ("access", config.logging().access())] {
+        if let Ok(..) = check_connection(cfg.name().to_string(), locator_addrs.clone()) {
+            slog_info!(log, "configured `{}` logging using `{}` service with `{}` source and `{}` severity - all further logs will be written there", ty, cfg.name(), cfg.source(), cfg.severity());
+        } else {
+            slog_warn!(log, "failed to establish connection to the logging service `{}`", cfg.name());
+        }
     }
 
     // TODO: Check connection to unicorn service.
 
-    let ctx = LoggerContext::new(config.logging().name().to_owned());
-    ctx.filter().set(config.logging().severity().into());
+    struct Loggers {
+        common: Logger,
+        access: Logger,
+    }
 
-    let log = ctx.create(format!("{}/common", config.logging().prefix()));
+    let log = {
+        let factory = |cfg: &LoggingBaseConfig| {
+            let ctx = LoggerContext::new(cfg.name().to_owned());
+            ctx.filter().set(cfg.severity().into());
+            ctx.create(cfg.source().to_owned())
+        };
+
+        Loggers {
+            common: factory(config.logging().common()),
+            access: factory(config.logging().access()),
+        }
+    };
 
     let mut txs = Vec::new();
     let mut rxs = Vec::new();
@@ -550,7 +554,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     //    routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
     routes.push(Arc::new(GeobaseRoute {
         txs: txs,
-        log: ctx.create(format!("{}/access", config.logging().prefix())),
+        log: log.access.clone(),
     }) as Arc<_>);
 
     let factory = ProxyServiceFactory { routes: routes };
@@ -574,14 +578,14 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         dispatchers.push(tx);
     }
 
-    cocaine_log!(log, Severity::Info, "started HTTP proxy at {}", addr);
-
     let listener = TcpBuilder::new_v6()?
         .bind(addr)?
         .listen(config.network().backlog())?;
 
     let mut core = Core::new()?;
     let listener = TcpListener::from_listener(listener, &addr, &core.handle())?;
+
+    cocaine_log!(log.common, Severity::Info, "started HTTP proxy at {}", addr);
 
     let mut iter = dispatchers.iter().cycle();
     core.run(listener.incoming().for_each(move |(sock, addr)| {

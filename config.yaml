@@ -27,15 +27,20 @@ locators:
 # Logging settings. All logs are written directly into the logging service.
 # Omit this section to disable logging into the Cocaine.
 logging:
-  # Service name into which all logging will be redirected.
-  name: logging-proxy
-  # Source prefix.
-  # For example, access logs will have the source field `<prefix>/access`.
-  prefix: proxy
-  # Severity filter.
-  # Logging events with severity less than specified will be dropped. Allowed
-  # values are: [debug, info, warn, error].
-  severity: warn
+  # The following fields can be configured:
+  # - name: service name into which all logging will be redirected.
+  # - source: source field for logging service.
+  # - severity: severity filter.
+  #   Logging events with severity less than specified will be dropped. Allowed
+  #   values are: [debug, info, warn, error].
+  common:
+    name: logging
+    source: proxy/common
+    severity: info
+  access:
+    name: logging-access
+    source: proxy/access
+    severity: warn
 
 ## Default pool size for applications.
 #pool: 10
