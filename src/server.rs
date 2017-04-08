@@ -12,20 +12,21 @@ use std::collections::HashMap;
 use std::error;
 use std::io::{self, ErrorKind};
 use std::mem;
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
+use net2::TcpBuilder;
 use rand;
-
 use futures::{future, Async, Future, Poll, Stream};
 use futures::sync::{oneshot, mpsc};
-use tokio_core::reactor::{Core, Handle};
-use tokio_minihttp::{Request, Response, Http};
-use tokio_proto::TcpServer;
-use tokio_service::{Service, NewService};
+use hyper::{self, Method, StatusCode};
+use hyper::server::{Http, Request, Response};
 use itertools::Itertools;
+use tokio_core::net::{TcpListener, TcpStream};
+use tokio_core::reactor::{Core, Handle};
+use tokio_service::{Service, NewService};
 
 use slog;
 use slog_term;
@@ -33,6 +34,7 @@ use slog::DrainExt;
 
 use rmps;
 use rmpv::ValueRef;
+
 use cocaine::{self, Builder, Dispatch, Error};
 use cocaine::protocol::{self, Flatten};
 use cocaine::logging::{Logger, LoggerContext, Severity};
@@ -42,7 +44,7 @@ use config::Config;
 type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
 
 trait Route: Send + Sync {
-    type Future: Future<Item = Response, Error = io::Error>;
+    type Future: Future<Item = Response, Error = hyper::Error>;
 
     /// Tries to process the request, returning a future (doesn't matter success or not) on
     /// conditions match, `None` otherwise.
@@ -55,60 +57,60 @@ trait Route: Send + Sync {
     fn process(&self, request: &Request) -> Option<Self::Future>;
 }
 
-struct MainRoute {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
-}
+//struct MainRoute {
+//    txs: Vec<mpsc::UnboundedSender<Event>>,
+//}
 
-impl Route for MainRoute {
-    type Future = Box<Future<Item = Response, Error = io::Error>>;
-
-    fn process(&self, req: &Request) -> Option<Self::Future> {
-        let service = req.headers().find(|&(name, ..)| name == "X-Cocaine-Service");
-        let event = req.headers().find(|&(name, ..)| name == "X-Cocaine-Event");
-
-        match (service, event) {
-            (Some(service), Some(event)) => {
-                let service = String::from_utf8(service.1.to_vec()).unwrap();
-                let event = String::from_utf8(event.1.to_vec()).unwrap();
-
-                let (tx, rx) = oneshot::channel();
-                let x = rand::random::<usize>();
-                let rolled = x % self.txs.len();
-                self.txs[rolled].send((service, box move |service: &cocaine::Service| {
-                    let future = service.call(0, &vec![event], AppReadDispatch {
-                        tx: tx,
-                        body: None,
-                        response: Some(Response::new()),
-                    })
-                    .and_then(|tx| {
-                        // TODO: Proper arguments.
-                        let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
-                        tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
-                        tx.send(2, &[0; 0]);
-                        Ok(())
-                    })
-                    .then(|_| Ok(()));
-
-                    future.boxed()
-                })).unwrap();
-
-                let future = rx.and_then(move |mut response| {
-                    response.header("X-Powered-By", "Cocaine");
-                    Ok(response)
-                }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
-
-                Some(future.boxed())
-            }
-            (Some(..), None) | (None, Some(..)) => {
-                let mut res = Response::new();
-                res.status_code(400, "Bad Request");
-                res.body(&"Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
-                Some(future::ok(res).boxed())
-            }
-            (None, None) => None,
-        }
-    }
-}
+//impl Route for MainRoute {
+//    type Future = Box<Future<Item = Response, Error = io::Error>>;
+//
+//    fn process(&self, req: &Request) -> Option<Self::Future> {
+//        let service = req.headers().find(|&(name, ..)| name == "X-Cocaine-Service");
+//        let event = req.headers().find(|&(name, ..)| name == "X-Cocaine-Event");
+//
+//        match (service, event) {
+//            (Some(service), Some(event)) => {
+//                let service = String::from_utf8(service.1.to_vec()).unwrap();
+//                let event = String::from_utf8(event.1.to_vec()).unwrap();
+//
+//                let (tx, rx) = oneshot::channel();
+//                let x = rand::random::<usize>();
+//                let rolled = x % self.txs.len();
+//                self.txs[rolled].send((service, box move |service: &cocaine::Service| {
+//                    let future = service.call(0, &vec![event], AppReadDispatch {
+//                        tx: tx,
+//                        body: None,
+//                        response: Some(Response::new()),
+//                    })
+//                    .and_then(|tx| {
+//                        // TODO: Proper arguments.
+//                        let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
+//                        tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
+//                        tx.send(2, &[0; 0]);
+//                        Ok(())
+//                    })
+//                    .then(|_| Ok(()));
+//
+//                    future.boxed()
+//                })).unwrap();
+//
+//                let future = rx.and_then(move |mut response| {
+//                    response.header("X-Powered-By", "Cocaine");
+//                    Ok(response)
+//                }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
+//
+//                Some(future.boxed())
+//            }
+//            (Some(..), None) | (None, Some(..)) => {
+//                let mut res = Response::new();
+//                res.status_code(400, "Bad Request");
+//                res.body(&"Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
+//                Some(future::ok(res).boxed())
+//            }
+//            (None, None) => None,
+//        }
+//    }
+//}
 
 struct AccessLogger {
     birth: Instant,
@@ -122,7 +124,7 @@ impl AccessLogger {
     fn new(log: Logger, req: &Request) -> Self {
         Self {
             birth: Instant::now(),
-            method: req.method().to_owned(),
+            method: req.method().as_ref().to_owned(),
             path: req.path().to_owned(),
             version: format!("HTTP/1.{}", req.version()),
             log: log,
@@ -151,7 +153,7 @@ struct GeobaseRoute {
 }
 
 impl Route for GeobaseRoute {
-    type Future = Box<Future<Item = Response, Error = io::Error>>;
+    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
     fn process(&self, req: &Request) -> Option<Self::Future> {
         let (tx, rx) = oneshot::channel();
@@ -168,33 +170,30 @@ impl Route for GeobaseRoute {
 
         let log = AccessLogger::new(self.log.clone(), req);
         let future = rx.and_then(move |(mut res, status, bytes_sent)| {
-            res.header("X-Powered-By", "Cocaine");
+            res.headers_mut().set_raw("X-Powered-By", "Cocaine");
             log.commit(x, status, bytes_sent);
             Ok(res)
-        }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
+        }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
         Some(future.boxed())
     }
 }
 
 struct ProxyService {
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = io::Error>>>>>,
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
 impl ProxyService {
     fn not_found(&self) -> Response {
-        let mut res = Response::new();
-        res.status_code(404, "Bad Request");
-        res.body(&"Not found");
-        res
+        Response::new().with_status(StatusCode::NotFound)
     }
 }
 
 impl Service for ProxyService {
     type Request  = Request;
     type Response = Response;
-    type Error    = io::Error;
-    type Future   = Box<Future<Item = Response, Error = io::Error>>;
+    type Error    = hyper::Error;
+    type Future   = Box<Future<Item = Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         for route in &self.routes {
@@ -231,82 +230,85 @@ impl Dispatch for SingleChunkReadDispatch {
             }
         };
 
-        let mut res = Response::new();
-        res.status_code(code, status);
-        res.body(&body);
+        let body_len = body.as_bytes().len() as u64;
 
-        drop(self.tx.send((res, code, body.as_bytes().len() as u64)));
+        let mut res = Response::new();
+        res.set_status(StatusCode::from_u16(code as u16));
+        res.set_body(body);
+
+        drop(self.tx.send((res, code, body_len)));
 
         None
     }
 
     fn discard(self: Box<Self>, err: &Error) {
-        let body = &format!("{}", err);
+        let body = format!("{}", err);
+        let body_len = body.as_bytes().len() as u64;
 
         let mut res = Response::new();
-        res.status_code(500, "Internal Server Error");
-        res.body(&body);
+        res.set_status(StatusCode::InternalServerError);
+        res.set_body(body);
 
-        drop(self.tx.send((res, 500, body.as_bytes().len() as u64)));
+        drop(self.tx.send((res, 500, body_len)));
     }
 }
 
-struct AppReadDispatch {
-    tx: oneshot::Sender<Response>,
-    body: Option<Vec<u8>>,
-    response: Option<Response>,
-}
-
-#[derive(Deserialize)]
-struct MetaInfo {
-    code: u32,
-    headers: Vec<(String, String)>
-}
-
-impl Dispatch for AppReadDispatch {
-    fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        match protocol::deserialize::<protocol::Streaming<rmps::Raw>>(ty, data)
-            .flatten()
-        {
-            Ok(Some(data)) => {
-                if self.body.is_none() {
-                    let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
-                    let mut res = self.response.take().unwrap();
-                    res.status_code(meta.code, "OK");
-                    for &(ref name, ref value) in &meta.headers {
-                        res.header(&name, &value);
-                    }
-                    self.response = Some(res);
-                    self.body = Some(Vec::with_capacity(64));
-                } else {
-                    self.body.as_mut().unwrap().extend(data.as_bytes());
-                }
-                Some(self)
-            }
-            Ok(None) => {
-                let mut res = self.response.take().unwrap();
-                res.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
-                drop(self.tx.send(res));
-                None
-            }
-            Err(err) => {
-                let mut res = Response::new();
-                res.status_code(500, "Internal Server Error");
-                res.body(&format!("{}", err));
-                drop(self.tx.send(res));
-                None
-            }
-        }
-    }
-
-    fn discard(self: Box<Self>, err: &Error) {
-        let mut res = Response::new();
-        res.status_code(500, "Internal Server Error");
-        res.body(&format!("{}", err));
-
-        drop(self.tx.send(res));
-    }
-}
+//struct AppReadDispatch {
+//    tx: oneshot::Sender<Response>,
+//    body: Option<Vec<u8>>,
+//    response: Option<Response>,
+//}
+//
+//#[derive(Deserialize)]
+//struct MetaInfo {
+//    code: u32,
+//    headers: Vec<(String, String)>
+//}
+//
+//impl Dispatch for AppReadDispatch {
+//    fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
+//        match protocol::deserialize::<protocol::Streaming<rmps::Raw>>(ty, data)
+//            .flatten()
+//        {
+//            Ok(Some(data)) => {
+//                if self.body.is_none() {
+//                    let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
+//                    let mut res = self.response.take().unwrap();
+//                    res.status_code(meta.code, "OK");
+//                    for &(ref name, ref value) in &meta.headers {
+//                        res.header(&name, &value);
+//                    }
+//                    self.response = Some(res);
+//                    self.body = Some(Vec::with_capacity(64));
+//                } else {
+//                    self.body.as_mut().unwrap().extend(data.as_bytes());
+//                }
+//                Some(self)
+//            }
+//            Ok(None) => {
+//                let mut res = self.response.take().unwrap();
+//                res.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
+//                drop(self.tx.send(res));
+//                None
+//            }
+//            Err(err) => {
+//                let mut res = Response::new();
+//                res.status_code(500, "Internal Server Error");
+//                res.body(&format!("{}", err));
+//                drop(self.tx.send(res));
+//                None
+//            }
+//        }
+//    }
+//
+//    fn discard(self: Box<Self>, err: &Error) {
+//        let mut res = Response::new();
+//        res.status_code(500, "Internal Server Error");
+//        res.body(&format!("{}", err));
+//
+//        drop(self.tx.send(res));
+//    }
+//}
 
 struct ServicePool {
     /// Next service.
@@ -422,17 +424,18 @@ impl Future for Infinity {
     }
 }
 
+#[derive(Clone)]
 struct ProxyServiceFactory {
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = io::Error>>>>>,
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
 impl NewService for ProxyServiceFactory {
     type Request  = Request;
     type Response = Response;
     type Instance = ProxyService;
-    type Error    = io::Error;
+    type Error    = hyper::Error;
 
-    fn new_service(&self) -> Result<Self::Instance, Self::Error> {
+    fn new_service(&self) -> Result<Self::Instance, io::Error> {
         let service = ProxyService {
             routes: self.routes.clone(),
         };
@@ -459,31 +462,51 @@ const CONFIG_LOCATOR_FAIL: &str = "failed to establish connection to the locator
 
 const CONFIG_LOGGING_FAIL: &str = "failed to establish connection to the logging service";
 
-pub struct Server {}
+use monitoring::MonitoringServer;
 
-impl Server {
-    pub fn new(config: Config) -> Self {
-        unimplemented!();
-    }
-
-    pub fn run(self) -> Result<(), Box<Error>> {
-        unimplemented!();
-    }
+struct HttpService {
+    rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>,
+    handle: Handle,
+    protocol: Http,
+    factory: ProxyServiceFactory,
 }
 
-use monitoring::MonitoringServer;
+impl Future for HttpService {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.rx.poll() {
+                Ok(Async::Ready(Some((sock, addr)))) => {
+                    self.protocol.bind_connection(&self.handle, sock, addr, self.factory.new_service().unwrap());
+                }
+                Ok(Async::NotReady) => {
+                    break;
+                }
+                Ok(Async::Ready(None)) | Err(..) => {
+                    return Ok(Async::Ready(()));
+                }
+            }
+        }
+
+        Ok(Async::NotReady)
+    }
+}
 
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // NOTE: Create and run monitoring server if needed.
     let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
 
-    let addr = SocketAddr::new(config.monitoring().addr().clone(), config.monitoring().port());
+    let (addr, port) = config.monitoring().addr().clone();
+    let addr = SocketAddr::new(addr, port);
     let log = root_log.new(o!("🚀  Mount" => format!("monitoring server on {}", addr)));
     slog_info!(log, "for more information about monitoring API visit `GET http://{}/help`", addr);
     MonitoringServer::new(addr).run().unwrap();
 
     // NOTE: Create and run HTTP proxy.
-    let addr = SocketAddr::new(config.addr().clone(), config.port());
+    let (addr, port) = config.addr().clone();
+    let addr = SocketAddr::new(addr, port);
     let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
     slog_info!(log, "cocaine http proxy server is ready");
 
@@ -513,27 +536,18 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let log = ctx.create(format!("{}/common", config.logging().prefix()));
 
     let mut txs = Vec::new();
-    let mut threads = Vec::new();
+    let mut rxs = Vec::new();
+    let mut threads: Vec<JoinHandle<Result<(), io::Error>>> = Vec::new();
+    let mut dispatchers = Vec::new();
 
-    for tid in 0..config.threads().network() {
+    for _ in 0..config.threads() {
         let (tx, rx) = mpsc::unbounded();
-        let thread = thread::Builder::new().name(format!("worker {:02}", tid)).spawn(move || {
-            let mut core = Core::new()
-                .expect("failed to initialize event loop");
-            let handle = core.handle();
-
-            core.run(Infinity::new(handle, rx)).unwrap();
-        })?;
-
         txs.push(tx);
-        threads.push(thread);
+        rxs.push(Some(rx));
     }
 
-    let mut srv = TcpServer::new(Http, addr);
-    srv.threads(config.threads().http());
-
     let mut routes = Vec::new();
-    routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
+    //    routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
     routes.push(Arc::new(GeobaseRoute {
         txs: txs,
         log: ctx.create(format!("{}/access", config.logging().prefix())),
@@ -541,8 +555,39 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
 
     let factory = ProxyServiceFactory { routes: routes };
 
-    cocaine_log!(log, Severity::Info, "started HTTP proxy at {}:{}", config.addr(), config.port());
-    srv.serve(factory);
+    for id in 0..config.threads() {
+        let (tx, rx) = mpsc::unbounded();
+        let irx = mem::replace(&mut rxs[id], None).unwrap();
+
+        let factory = factory.clone();
+        let thread = thread::Builder::new().name(format!("worker {:02}", id)).spawn(move || {
+            let mut core = Core::new()?;
+            let handle = core.handle();
+
+            handle.spawn(Infinity::new(handle.clone(), irx));
+            core.run(HttpService { rx: rx, handle: handle, protocol: Http::new(), factory: factory }).unwrap();
+
+            Ok(())
+        })?;
+
+        threads.push(thread);
+        dispatchers.push(tx);
+    }
+
+    cocaine_log!(log, Severity::Info, "started HTTP proxy at {}", addr);
+
+    let listener = TcpBuilder::new_v6()?
+        .bind(addr)?
+        .listen(config.network().backlog())?;
+
+    let mut core = Core::new()?;
+    let listener = TcpListener::from_listener(listener, &addr, &core.handle())?;
+
+    let mut iter = dispatchers.iter().cycle();
+    core.run(listener.incoming().for_each(move |(sock, addr)| {
+        iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
+        Ok(())
+    }))?;
 
     Ok(())
 }

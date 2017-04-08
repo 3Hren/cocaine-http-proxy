@@ -1,16 +1,21 @@
-# IP address for HTTP listeners to bind on.
-addr: "::1"
+# Network settings for the proxy.
+network:
+  # Tuple of an IP address with port for HTTP listener to bind on.
+  # Note that binding on `::` will bind on `0.0.0.0` too as long as
+  # the `net.ipv6.bindv6only` sysctl is set to 0 (default).
+  addr: ["::", 8080]
+  # Limit for the queue of incoming connections.
+  backlog: 128
 
-# Port for HTTP listeners to bind on.
-port: 8080
+# Number of worker threads.
+# The proxy uses main thread for accepting connections and `threads` threads
+# for serving requests.
+threads: 24
 
-threads:
-  http: 8
-  network: 16
-
+# Monitoring server settings.
+# The monitoring server consumes one additional thread for serving requests.
 monitoring:
-  addr: "::1"
-  port: 10000
+  addr: ["::1", 10000]
 
 # Locator endpoints.
 # These are passed directly into the cocaine-framework for service resolution.
@@ -30,7 +35,7 @@ logging:
   # Severity filter.
   # Logging events with severity less than specified will be dropped. Allowed
   # values are: [debug, info, warn, error].
-  severity: debug
+  severity: warn
 
 ## Default pool size for applications.
 #pool: 10

@@ -9,35 +9,27 @@ use serde::de::{self, Deserialize, Deserializer};
 
 use cocaine::logging::Severity;
 
-#[derive(Deserialize)]
-pub struct ThreadConfig {
-    http: Option<usize>,
-    network: usize,
-}
-
-impl ThreadConfig {
-    pub fn http(&self) -> usize {
-        self.http.unwrap_or(1)
-    }
-
-    pub fn network(&self) -> usize {
-        self.network
-    }
-
-    fn sanitize(&self) -> Result<(), Box<Error>> {
-        if let Some(0) = self.http {
-            return Err("number of HTTP threads must be a positive value (or absent)".into());
-        }
-
-        Ok(())
-    }
-}
-
 fn deserialize_from_str<D>(de: D) -> Result<Severity, D::Error>
     where D: Deserializer
 {
     let s: String = Deserialize::deserialize(de)?;
     Severity::from_str(&s).map_err(de::Error::custom)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NetworkConfig {
+    addr: (IpAddr, u16),
+    backlog: i32,
+}
+
+impl NetworkConfig {
+    pub fn addr(&self) -> &(IpAddr, u16) {
+        &self.addr
+    }
+
+    pub fn backlog(&self) -> i32 {
+        self.backlog
+    }
 }
 
 #[derive(Deserialize)]
@@ -64,25 +56,19 @@ impl LoggingConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct MonitoringConfig {
-    addr: IpAddr,
-    port: u16,
+    addr: (IpAddr, u16),
 }
 
 impl MonitoringConfig {
-    pub fn addr(&self) -> &IpAddr {
+    pub fn addr(&self) -> &(IpAddr, u16) {
         &self.addr
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
     }
 }
 
 #[derive(Deserialize)]
 pub struct Config {
-    addr: IpAddr,
-    port: u16,
-    threads: ThreadConfig,
+    network: NetworkConfig,
+    threads: Option<usize>,
     locators: Vec<(IpAddr, u16)>,
     logging: LoggingConfig,
     monitoring: MonitoringConfig,
@@ -98,20 +84,23 @@ impl Config {
     }
 
     fn sanitize(cfg: &Config) -> Result<(), Box<Error>> {
-        cfg.threads().sanitize()?;
+        if let Some(0) = cfg.threads {
+            return Err("number of worker threads must be a positive value (or absent)".into());
+        }
+
         Ok(())
     }
 
-    pub fn addr(&self) -> &IpAddr {
-        &self.addr
+    pub fn addr(&self) -> &(IpAddr, u16) {
+        &self.network.addr
     }
 
-    pub fn port(&self) -> u16 {
-        self.port
+    pub fn network(&self) -> &NetworkConfig {
+        &self.network
     }
 
-    pub fn threads(&self) -> &ThreadConfig {
-        &self.threads
+    pub fn threads(&self) -> usize {
+        self.threads.unwrap_or(1)
     }
 
     pub fn locators(&self) -> &Vec<(IpAddr, u16)> {
