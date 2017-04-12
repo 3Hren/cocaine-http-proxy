@@ -1,479 +1,162 @@
-//! It is unclear what type of HTTP backend will be chosen finally.
-
-// TODO: unix/config -> dump config (often config file changes, but daemon not restarted).
-// TODO: unix/metrics -> dump metrics.
-// TODO: show info about service pool. Draw cluster map. Count response times.
-
-use std;
-use std::borrow::Cow;
-use std::boxed::FnBox;
-use std::collections::HashMap;
-use std::error;
-use std::io::{self, ErrorKind};
-use std::mem;
+use std::cell::RefCell;
+use std::io::{self};
 use std::net::SocketAddr;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 
 use net2::TcpBuilder;
-use rand;
+use net2::unix::UnixTcpBuilderExt;
+use num_cpus;
+
 use futures::{future, Async, Future, Poll, Stream};
-use futures::sync::{oneshot, mpsc};
-use hyper::{self, StatusCode};
+use futures::sync::mpsc;
+use futures::task::{self, Task};
+
+use hyper;
 use hyper::server::{Http, Request, Response};
-use itertools::Itertools;
+
 use tokio_core::net::{TcpListener, TcpStream};
-use tokio_core::reactor::{Core, Handle};
-use tokio_service::{Service, NewService};
+use tokio_core::reactor::{Core, Handle, Timeout};
+use tokio_service::Service;
 
-use slog;
-use slog_term;
-use slog::DrainExt;
+use service::{ServiceFactory, ServiceFactoryFactory};
 
-use rmps;
-use rmpv::ValueRef;
+const DEFAULT_BACKLOG: i32 = 1024;
 
-use cocaine::{self, Builder, Dispatch, Error};
-use cocaine::protocol::{self, Flatten};
-use cocaine::logging::{Logger, LoggerContext, Severity};
-
-use config::{Config, LoggingBaseConfig};
-
-type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
-
-trait Route: Send + Sync {
-    type Future: Future<Item = Response, Error = hyper::Error>;
-
-    /// Tries to process the request, returning a future (doesn't matter success or not) on
-    /// conditions match, `None` otherwise.
-    ///
-    /// A route can process the request fully if all conditions are met, for example if it requires
-    /// some headers and all of them are specified.
-    /// Also it may decide to fail the request, because of incomplete prerequisites, for example if
-    /// it detects all required headers, but fails to match the request method.
-    /// At last a route can be neutral to the request, returning `None`.
-    fn process(&self, request: &Request) -> Option<Self::Future>;
+struct Info {
+    active: usize,
+    blocker: Option<Task>,
 }
 
-//struct MainRoute {
-//    txs: Vec<mpsc::UnboundedSender<Event>>,
-//}
-
-//impl Route for MainRoute {
-//    type Future = Box<Future<Item = Response, Error = io::Error>>;
-//
-//    fn process(&self, req: &Request) -> Option<Self::Future> {
-//        let service = req.headers().find(|&(name, ..)| name == "X-Cocaine-Service");
-//        let event = req.headers().find(|&(name, ..)| name == "X-Cocaine-Event");
-//
-//        match (service, event) {
-//            (Some(service), Some(event)) => {
-//                let service = String::from_utf8(service.1.to_vec()).unwrap();
-//                let event = String::from_utf8(event.1.to_vec()).unwrap();
-//
-//                let (tx, rx) = oneshot::channel();
-//                let x = rand::random::<usize>();
-//                let rolled = x % self.txs.len();
-//                self.txs[rolled].send((service, box move |service: &cocaine::Service| {
-//                    let future = service.call(0, &vec![event], AppReadDispatch {
-//                        tx: tx,
-//                        body: None,
-//                        response: Some(Response::new()),
-//                    })
-//                    .and_then(|tx| {
-//                        // TODO: Proper arguments.
-//                        let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
-//                        tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
-//                        tx.send(2, &[0; 0]);
-//                        Ok(())
-//                    })
-//                    .then(|_| Ok(()));
-//
-//                    future.boxed()
-//                })).unwrap();
-//
-//                let future = rx.and_then(move |mut response| {
-//                    response.header("X-Powered-By", "Cocaine");
-//                    Ok(response)
-//                }).map_err(|err| io::Error::new(ErrorKind::Other, format!("{}", err)));
-//
-//                Some(future.boxed())
-//            }
-//            (Some(..), None) | (None, Some(..)) => {
-//                let mut res = Response::new();
-//                res.status_code(400, "Bad Request");
-//                res.body(&"Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
-//                Some(future::ok(res).boxed())
-//            }
-//            (None, None) => None,
-//        }
-//    }
-//}
-
-struct AccessLogger {
-    birth: Instant,
-    method: String,
-    path: String,
-    version: String,
-    log: Logger,
-}
-
-impl AccessLogger {
-    fn new(log: Logger, req: &Request) -> Self {
+impl Info {
+    fn new() -> Self {
         Self {
-            birth: Instant::now(),
-            method: req.method().as_ref().to_owned(),
-            path: req.path().to_owned(),
-            version: format!("HTTP/1.{}", req.version()),
-            log: log,
+            active: 0,
+            blocker: None,
         }
     }
-
-    fn commit(self, trace: usize, status: u32, bytes_sent: u64) {
-        let elapsed = self.birth.elapsed();
-        let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
-
-        cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", [elapsed_ms], {
-            request_id: trace,
-            duration: elapsed_ms / 1000.0,
-            method: self.method,
-            path: self.path,
-            version: self.version,
-            status: status,
-            bytes_sent: bytes_sent,
-        });
-    }
 }
 
-struct GeobaseRoute {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
-    log: Logger,
+struct NotifyService<S> {
+    inner: S,
+    info: Weak<RefCell<Info>>,
 }
 
-impl Route for GeobaseRoute {
-    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
+impl<S> NotifyService<S> {
+    fn new(inner: S, info: &mut Rc<RefCell<Info>>) -> Self {
+        info.borrow_mut().active += 1;
 
-    fn process(&self, req: &Request) -> Option<Self::Future> {
-        let (tx, rx) = oneshot::channel();
-        let x = rand::random::<usize>();
-        let rolled = x % self.txs.len();
-        self.txs[rolled].send(("geobase".into(), box move |service: &cocaine::Service| {
-            let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
-                .then(|tx| {
-                    drop(tx);
-                    Ok(())
-                });
-            future.boxed()
-        })).unwrap();
-
-        let log = AccessLogger::new(self.log.clone(), req);
-        let future = rx.and_then(move |(mut res, status, bytes_sent)| {
-            res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(x, status, bytes_sent);
-            Ok(res)
-        }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
-
-        Some(future.boxed())
-    }
-}
-
-struct ProxyService {
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
-}
-
-impl Service for ProxyService {
-    type Request  = Request;
-    type Response = Response;
-    type Error    = hyper::Error;
-    type Future   = Box<Future<Item = Response, Error = Self::Error>>;
-
-    fn call(&self, req: Request) -> Self::Future {
-        for route in &self.routes {
-            if let Some(future) = route.process(&req) {
-                return future;
-            }
+        Self {
+            inner: inner,
+            info: Rc::downgrade(&info),
         }
-
-        future::ok(Response::new().with_status(StatusCode::NotFound)).boxed()
     }
 }
 
-impl Drop for ProxyService {
-    fn drop(&mut self) {}
-}
-
-struct SingleChunkReadDispatch {
-    tx: oneshot::Sender<(Response, u32, u64)>,
-}
-
-impl Dispatch for SingleChunkReadDispatch {
-    fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        let (code, body) = match ty {
-            0 => {
-                (200, format!("{}", data))
-            }
-            1 => {
-                (500, format!("{}", data))
-            }
-            m => {
-                (500, format!("unknown type: {} {}", m, data))
-            }
+impl<S> Drop for NotifyService<S> {
+    fn drop(&mut self) {
+        let info = match self.info.upgrade() {
+            Some(info) => info,
+            None => return,
         };
 
-        let body_len = body.as_bytes().len() as u64;
-
-        let mut res = Response::new();
-        res.set_status(StatusCode::from_u16(code as u16));
-        res.set_body(body);
-
-        drop(self.tx.send((res, code, body_len)));
-
-        None
-    }
-
-    fn discard(self: Box<Self>, err: &Error) {
-        let body = format!("{}", err);
-        let body_len = body.as_bytes().len() as u64;
-
-        let mut res = Response::new();
-        res.set_status(StatusCode::InternalServerError);
-        res.set_body(body);
-
-        drop(self.tx.send((res, 500, body_len)));
-    }
-}
-
-//struct AppReadDispatch {
-//    tx: oneshot::Sender<Response>,
-//    body: Option<Vec<u8>>,
-//    response: Option<Response>,
-//}
-//
-//#[derive(Deserialize)]
-//struct MetaInfo {
-//    code: u32,
-//    headers: Vec<(String, String)>
-//}
-//
-//impl Dispatch for AppReadDispatch {
-//    fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-//        match protocol::deserialize::<protocol::Streaming<rmps::Raw>>(ty, data)
-//            .flatten()
-//        {
-//            Ok(Some(data)) => {
-//                if self.body.is_none() {
-//                    let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
-//                    let mut res = self.response.take().unwrap();
-//                    res.status_code(meta.code, "OK");
-//                    for &(ref name, ref value) in &meta.headers {
-//                        res.header(&name, &value);
-//                    }
-//                    self.response = Some(res);
-//                    self.body = Some(Vec::with_capacity(64));
-//                } else {
-//                    self.body.as_mut().unwrap().extend(data.as_bytes());
-//                }
-//                Some(self)
-//            }
-//            Ok(None) => {
-//                let mut res = self.response.take().unwrap();
-//                res.body(&unsafe{ ::std::str::from_utf8_unchecked(&self.body.take().unwrap()) });
-//                drop(self.tx.send(res));
-//                None
-//            }
-//            Err(err) => {
-//                let mut res = Response::new();
-//                res.status_code(500, "Internal Server Error");
-//                res.body(&format!("{}", err));
-//                drop(self.tx.send(res));
-//                None
-//            }
-//        }
-//    }
-//
-//    fn discard(self: Box<Self>, err: &Error) {
-//        let mut res = Response::new();
-//        res.status_code(500, "Internal Server Error");
-//        res.body(&format!("{}", err));
-//
-//        drop(self.tx.send(res));
-//    }
-//}
-
-struct ServicePool {
-    /// Next service.
-    counter: usize,
-    name: String,
-    /// Reconnect threshold.
-    threshold: Duration,
-    handle: Handle,
-    last_traverse: SystemTime,
-
-    services: Vec<(cocaine::Service, SystemTime)>,
-}
-
-impl ServicePool {
-    fn new(name: String, limit: usize, handle: &Handle) -> Self {
-        let now = SystemTime::now();
-
-        Self {
-            counter: 0,
-            name: name.clone(),
-            threshold: Duration::new(60, 0),
-            handle: handle.clone(),
-            last_traverse: now,
-            services: std::iter::repeat(name)
-                .take(limit)
-                .map(|name| (cocaine::Service::new(name.clone(), handle), now))
-                .collect()
-        }
-    }
-
-    fn next(&mut self) -> &cocaine::Service {
-        let now = SystemTime::now();
-
-        // No often than every 5 seconds we're traversing services for reconnection.
-        if now.duration_since(self.last_traverse).unwrap() > Duration::new(5, 0) {
-            self.last_traverse = now;
-
-            let mut killed = 0;
-
-            let kill_limit = self.services.len() / 2;
-            for &mut (ref mut service, ref mut birth) in self.services.iter_mut() {
-                if now.duration_since(*birth).unwrap() > self.threshold {
-                    killed += 1;
-                    mem::replace(birth, now);
-                    mem::replace(service, cocaine::Service::new(self.name.clone(), &self.handle));
-
-                    if killed > kill_limit {
-                        break;
-                    }
-                }
-                // TODO: Tiny pre-connection optimizations.
+        let mut info = info.borrow_mut();
+        info.active -= 1;
+        if info.active == 0 {
+            if let Some(task) = info.blocker.take() {
+                task.unpark();
             }
         }
-
-        self.counter = (self.counter + 1) % self.services.len();
-        &self.services[self.counter].0
     }
 }
 
-struct Infinity {
-    handle: Handle,
-    rx: mpsc::UnboundedReceiver<Event>,
+impl<S: Service> Service for NotifyService<S> {
+    type Request = S::Request;
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
 
-    pool: HashMap<String, ServicePool>,
-}
-
-impl Infinity {
-    fn new(handle: Handle, rx: mpsc::UnboundedReceiver<Event>) -> Self {
-        Infinity {
-            handle: handle,
-            rx: rx,
-            pool: HashMap::new(),
-        }
+    fn call(&self, message: Self::Request) -> Self::Future {
+        self.inner.call(message)
     }
 }
 
-impl Infinity {
-    fn select_service(&mut self, name: String, handle: &Handle) -> &cocaine::Service {
-        let mut pool = self.pool.entry(name.clone())
-            .or_insert_with(|| ServicePool::new(name, 10, handle));
-        pool.next()
+struct NotifyServiceFactory<F> {
+    wrapped: F,
+    info: Rc<RefCell<Info>>,
+}
+
+impl<F: ServiceFactory> ServiceFactory for NotifyServiceFactory<F> {
+    type Request  = F::Request;
+    type Response = F::Response;
+    type Instance = NotifyService<F::Instance>;
+    type Error    = F::Error;
+
+    fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
+        let service = self.wrapped.create_service(addr)?;
+        let wrapped = NotifyService::new(service, &mut self.info);
+        Ok(wrapped)
     }
 }
 
-impl Future for Infinity {
+struct WaitUntilZero {
+    info: Rc<RefCell<Info>>,
+}
+
+impl Future for WaitUntilZero {
     type Item = ();
-    type Error = ();
+    type Error = io::Error;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.rx.poll() {
-                Ok(Async::Ready(Some((name, func)))) => {
-                    // Select the next service that is not reconnecting right now. No more than N/2
-                    // services can be in reconnecting state concurrently.
-                    let handle = self.handle.clone();
-                    let ref service = self.select_service(name, &handle);
-
-                    handle.spawn(func.call_box((service,)));
-                }
-                // TODO: RG updates.
-                // TODO: Unicorn timeout updates.
-                // TODO: Unicorn tracing chance updates.
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Ok(Async::Ready(None)) | Err(..) => {
-                    return Ok(Async::Ready(()));
-                }
-            }
+    fn poll(&mut self) -> Poll<(), io::Error> {
+        let mut info = self.info.borrow_mut();
+        if info.active == 0 {
+            Ok(().into())
+        } else {
+            info.blocker = Some(task::park());
+            Ok(Async::NotReady)
         }
-
-        Ok(Async::NotReady)
     }
 }
 
-#[derive(Clone)]
-struct ProxyServiceFactory {
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
-}
-
-impl NewService for ProxyServiceFactory {
-    type Request  = Request;
-    type Response = Response;
-    type Instance = ProxyService;
-    type Error    = hyper::Error;
-
-    fn new_service(&self) -> Result<Self::Instance, io::Error> {
-        let service = ProxyService {
-            routes: self.routes.clone(),
-        };
-
-        Ok(service)
-    }
-}
-
-fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>) -> Result<(), Error>
-    where N: Into<Cow<'static, str>>
-{
-    let mut core = Core::new()
-        .map_err(Error::Io)?;
-
-    let service = Builder::new(name)
-        .locator_addrs(locator_addrs)
-        .build(&core.handle());
-
-    core.run(service.connect())
-}
-
-const CONFIG_LOCATOR_SUCC: &str = "configured cloud entry points using locator(s) specified above";
-const CONFIG_LOCATOR_FAIL: &str = "failed to establish connection to the locator(s) specified above - ensure that `cocaine-runtime` is running and the `locator` is properly configured";
-
-use monitoring::MonitoringServer;
-
-struct HttpService {
+struct HttpService<T> {
     rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>,
     handle: Handle,
     protocol: Http,
-    factory: ProxyServiceFactory,
+    factory: T,
 }
 
-impl Future for HttpService {
+impl<T> HttpService<T> {
+    fn new(rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>, handle: Handle, factory: T) -> Self {
+        Self {
+            rx: rx,
+            handle: handle,
+            protocol: Http::new(),
+            factory: factory,
+        }
+    }
+}
+
+impl<T: ServiceFactory<Request=Request, Response=Response, Error=hyper::Error>> Future for HttpService<T>
+    where T::Instance: 'static
+{
     type Item = ();
-    type Error = ();
+    type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.rx.poll() {
                 Ok(Async::Ready(Some((sock, addr)))) => {
-                    self.protocol.bind_connection(&self.handle, sock, addr, self.factory.new_service().unwrap());
+                    let service = self.factory.create_service(Some(addr))?;
+                    self.protocol.bind_connection(&self.handle, sock, addr, service);
                 }
                 Ok(Async::NotReady) => {
                     break;
                 }
                 Ok(Async::Ready(None)) | Err(..) => {
+                    // Listener is gone.
+                    println!("Listener is gone.");
                     return Ok(Async::Ready(()));
                 }
             }
@@ -483,115 +166,156 @@ impl Future for HttpService {
     }
 }
 
-pub fn run(config: Config) -> Result<(), Box<error::Error>> {
-    // NOTE: Create and run monitoring server if needed.
-    let root_log = slog::Logger::root(slog_term::streamer().stdout().compact().build().fuse(), o!());
+pub struct ServerBuilder {
+    addr: SocketAddr,
+    backlog: i32,
+    num_threads: usize,
+}
 
-    let (addr, port) = config.monitoring().addr().clone();
-    let addr = SocketAddr::new(addr, port);
-    let log = root_log.new(o!("🚀  Mount" => format!("monitoring server on {}", addr)));
-    slog_info!(log, "for more information about monitoring API visit `GET http://{}/help`", addr);
-    MonitoringServer::new(addr).run().unwrap();
-
-    // NOTE: Create and run HTTP proxy.
-    let (addr, port) = config.network().addr().clone();
-    let addr = SocketAddr::new(addr, port);
-    let log = root_log.new(o!("🚀  Mount" => format!("cocaine proxy server on {}", addr)));
-    slog_info!(log, "cocaine http proxy server is ready");
-
-    let locator_addrs = config.locators()
-        .iter()
-        .map(|&(addr, port)| SocketAddr::new(addr.clone(), port))
-        .collect::<Vec<SocketAddr>>();
-    let log = root_log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
-    if let Ok(..) = check_connection("locator", locator_addrs.clone()) {
-        slog_info!(log, CONFIG_LOCATOR_SUCC);
-    } else {
-        slog_warn!(log, CONFIG_LOCATOR_FAIL);
-    }
-
-    let log = root_log.new(o!("Service" => "logging"));
-    for &(ty, ref cfg) in &[("common", config.logging().common()), ("access", config.logging().access())] {
-        if let Ok(..) = check_connection(cfg.name().to_string(), locator_addrs.clone()) {
-            slog_info!(log, "configured `{}` logging using `{}` service with `{}` source and `{}` severity - all further logs will be written there", ty, cfg.name(), cfg.source(), cfg.severity());
-        } else {
-            slog_warn!(log, "failed to establish connection to the logging service `{}`", cfg.name());
+impl ServerBuilder {
+    pub fn new(addr: SocketAddr) -> Self {
+        Self {
+            addr: addr,
+            backlog: DEFAULT_BACKLOG,
+            num_threads: num_cpus::get(),
         }
     }
 
-    // TODO: Check connection to unicorn service.
-
-    struct Loggers {
-        common: Logger,
-        access: Logger,
+    pub fn backlog(mut self, backlog: i32) -> Self {
+        self.backlog = backlog;
+        self
     }
 
-    let log = {
-        let factory = |cfg: &LoggingBaseConfig| {
-            let ctx = LoggerContext::new(cfg.name().to_owned());
-            ctx.filter().set(cfg.severity().into());
-            ctx.create(cfg.source().to_owned())
-        };
+    pub fn threads(mut self, num_threads: usize) -> Self {
+        self.num_threads = num_threads;
+        self
+    }
+}
 
-        Loggers {
-            common: factory(config.logging().common()),
-            access: factory(config.logging().access()),
-        }
+fn bind(addr: SocketAddr, backlog: i32, handle: &Handle) -> Result<TcpListener, io::Error> {
+    let sock = match addr {
+        SocketAddr::V4(..) => TcpBuilder::new_v4(),
+        SocketAddr::V6(..) => TcpBuilder::new_v6(),
     };
 
-    let mut txs = Vec::new();
-    let mut rxs = Vec::new();
-    let mut threads: Vec<JoinHandle<Result<(), io::Error>>> = Vec::new();
-    let mut dispatchers = Vec::new();
-
-    for _ in 0..config.threads() {
-        let (tx, rx) = mpsc::unbounded();
-        txs.push(tx);
-        rxs.push(Some(rx));
-    }
-
-    let mut routes = Vec::new();
-    //    routes.push(Arc::new(MainRoute { txs: txs.clone() }) as Arc<_>);
-    routes.push(Arc::new(GeobaseRoute {
-        txs: txs,
-        log: log.access.clone(),
-    }) as Arc<_>);
-
-    let factory = ProxyServiceFactory { routes: routes };
-
-    for id in 0..config.threads() {
-        let (tx, rx) = mpsc::unbounded();
-        let irx = mem::replace(&mut rxs[id], None).unwrap();
-
-        let factory = factory.clone();
-        let thread = thread::Builder::new().name(format!("worker {:02}", id)).spawn(move || {
-            let mut core = Core::new()?;
-            let handle = core.handle();
-
-            handle.spawn(Infinity::new(handle.clone(), irx));
-            core.run(HttpService { rx: rx, handle: handle, protocol: Http::new(), factory: factory }).unwrap();
-
-            Ok(())
-        })?;
-
-        threads.push(thread);
-        dispatchers.push(tx);
-    }
-
-    let listener = TcpBuilder::new_v6()?
+    let listener = sock?
+        .reuse_port(true)?
         .bind(addr)?
-        .listen(config.network().backlog())?;
+        .listen(backlog)?;
 
-    let mut core = Core::new()?;
-    let listener = TcpListener::from_listener(listener, &addr, &core.handle())?;
+    TcpListener::from_listener(listener, &addr, handle)
+}
 
-    cocaine_log!(log.common, Severity::Info, "started HTTP proxy at {}", addr);
+#[derive(Debug)]
+pub struct ServerGroup {
+    core: Core,
+    servers: Vec<(TcpListener, Vec<mpsc::UnboundedSender<(TcpStream, SocketAddr)>>)>,
+    threads: Vec<JoinHandle<Result<(), io::Error>>>,
+}
 
-    let mut iter = dispatchers.iter().cycle();
-    core.run(listener.incoming().for_each(move |(sock, addr)| {
-        iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
+impl ServerGroup {
+    pub fn new() -> Result<Self, io::Error> {
+        let core = Core::new()?;
+        let result = Self {
+            core: core,
+            servers: Vec::new(),
+            threads: Vec::new(),
+        };
+
+        Ok(result)
+    }
+
+    /// 1. Binds socket, starts listening.
+    /// 2. Spawns worker thread(s).
+    pub fn expose<F, T>(mut self, builder: ServerBuilder, factory: F) -> Result<Self, io::Error>
+        where F: ServiceFactoryFactory<Factory = T> + 'static,
+              T: ServiceFactory<Request = Request, Response = Response, Error = hyper::Error> + 'static
+    {
+        let listener = bind(builder.addr, builder.backlog, &self.core.handle())?;
+
+        let mut dispatchers = Vec::new();
+        let factory = Arc::new(factory);
+
+        for id in 0..builder.num_threads {
+            let (tx, rx) = mpsc::unbounded();
+            let factory = factory.clone();
+            let name = format!("worker {:02}", id);
+            let thread = thread::Builder::new().name(name).spawn(move || {
+                let mut core = Core::new()?;
+                let handle = core.handle();
+
+                // Mini-future to track the number of active services.
+                let info = Rc::new(RefCell::new(Info::new()));
+
+                let factory = NotifyServiceFactory {
+                    wrapped: factory.create_factory(&handle),
+                    info: info.clone(),
+                };
+
+                // This will stop just after listener is stopped, because it polls the connection
+                // receiver.
+                core.run(HttpService::new(rx, handle.clone(), factory))?;
+
+                let monitor = WaitUntilZero { info: info };
+                let timeout = Timeout::new(Duration::new(5, 0), &handle)?;
+
+                // We've stopped accepting new connections at this point, but we want to give
+                // existing connections a chance to clear themselves out. Wait at most `timeout`
+                // time before we just return clearing everything out.
+                //
+                // Our custom `WaitUntilZero` will resolve once all services constructed here have
+                // been destroyed.
+                match core.run(monitor.select(timeout)) {
+                    Ok(..) => {}
+                    Err((err, ..)) => return Err(err.into()),
+                }
+
+                Ok(())
+            })?;
+
+            dispatchers.push(tx);
+            self.threads.push(thread);
+        }
+
+        self.servers.push((listener, dispatchers));
+
+        Ok(self)
+    }
+
+    /// Execute this server infinitely.
+    ///
+    /// This method does not currently return, but it will return an error if one occurs.
+    pub fn run(self) -> Result<(), io::Error> {
+        self.run_until(future::empty())
+    }
+
+    /// Execute this server until the given future resolves.
+    pub fn run_until<F>(mut self, cancel: F) -> Result<(), io::Error>
+        where F: Future<Item = (), Error = ()>
+    {
+        let mut listeners = Vec::new();
+
+        for (listener, dispatchers) in self.servers {
+            let mut iter = dispatchers.into_iter().cycle();
+            let listener = listener.incoming().for_each(move |(sock, addr)| {
+                iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
+                Ok(())
+            });
+
+            listeners.push(listener);
+        }
+
+        let main = future::join_all(listeners).and_then(|vec| Ok(drop(vec)));
+
+        let cancel = cancel.then(|result| Ok(drop(result)));
+        self.core.run(main.select(cancel).map_err(|(err, ..)| err))?;
+
+        println!("Before join");
+
+        for thread in self.threads {
+            thread.join().unwrap()?;
+        }
+
         Ok(())
-    }))?;
-
-    Ok(())
+    }
 }

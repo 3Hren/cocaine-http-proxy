@@ -1,20 +1,18 @@
 use std::io;
 use std::net::SocketAddr;
-use std::thread::{self, JoinHandle};
 
-use net2::TcpBuilder;
+use futures::{future, Future};
 
-use futures::{future, Async, Future, Poll, Stream};
-use futures::sync::mpsc;
-
-use tokio_core::net::{TcpListener, TcpStream};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Handle;
 use tokio_service::Service;
 
 use hyper::{self, Method, StatusCode};
-use hyper::server::{Http, Request, Response};
+use hyper::server::{Request, Response};
 
-struct Handler;
+use service::{ServiceFactory, ServiceFactoryFactory};
+
+#[derive(Debug)]
+pub struct Handler;
 
 impl Service for Handler {
     type Request  = Request;
@@ -32,88 +30,27 @@ impl Service for Handler {
     }
 }
 
-struct HttpService {
-    rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>,
-    handle: Handle,
-    protocol: Http,
-}
+#[derive(Debug)]
+pub struct MonitoringServiceFactory;
 
-impl Future for HttpService {
-    type Item = ();
-    type Error = ();
+impl ServiceFactory for MonitoringServiceFactory {
+    type Request  = Request;
+    type Response = Response;
+    type Instance = Handler;
+    type Error    = hyper::Error;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.rx.poll() {
-                Ok(Async::Ready(Some((sock, addr)))) => {
-                    self.protocol.bind_connection(&self.handle, sock, addr, Handler);
-                }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Ok(Async::Ready(None)) | Err(..) => {
-                    return Ok(Async::Ready(()));
-                }
-            }
-        }
-
-        Ok(Async::NotReady)
+    fn create_service(&mut self, _addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
+        Ok(Handler)
     }
 }
 
 #[derive(Debug)]
-pub struct MonitoringServer {
-    addr: SocketAddr,
-    backlog: i32,
-    threads: usize,
-}
+pub struct MonitoringServiceFactoryFactory;
 
-impl MonitoringServer {
-    pub fn new(addr: SocketAddr) -> Self {
-        Self {
-            addr: addr,
-            backlog: 128,
-            threads: 1,
-        }
-    }
+impl ServiceFactoryFactory for MonitoringServiceFactoryFactory {
+    type Factory = MonitoringServiceFactory;
 
-    pub fn run(self) -> Result<JoinHandle<Result<(), io::Error>>, io::Error> {
-        let listener = TcpBuilder::new_v6()?
-            .bind(self.addr)?
-            .listen(self.backlog)?;
-
-        let mut threads: Vec<JoinHandle<Result<(), io::Error>>> = Vec::new();
-        let mut dispatchers = Vec::new();
-
-        for id in 0..self.threads {
-            let (tx, rx) = mpsc::unbounded();
-
-            let thread = thread::Builder::new().name(format!("monitor {:02}", id)).spawn(move || {
-                let mut core = Core::new()?;
-                let handle = core.handle();
-
-                core.run(HttpService { rx: rx, handle: handle, protocol: Http::new() }).unwrap();
-
-                Ok(())
-            })?;
-
-            threads.push(thread);
-            dispatchers.push(tx);
-        }
-
-        let thread = thread::spawn(move || {
-            let mut core = Core::new()?;
-            let listener = TcpListener::from_listener(listener, &self.addr, &core.handle())?;
-
-            let mut iter = dispatchers.iter().cycle();
-            core.run(listener.incoming().for_each(move |(sock, addr)| {
-                iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
-                Ok(())
-            }))?;
-
-            Ok(())
-        });
-
-        Ok(thread)
+    fn create_factory(&self, _handle: &Handle) -> Self::Factory {
+        MonitoringServiceFactory
     }
 }

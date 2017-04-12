@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use serde_yaml;
@@ -23,8 +23,9 @@ pub struct NetworkConfig {
 }
 
 impl NetworkConfig {
-    pub fn addr(&self) -> &(IpAddr, u16) {
-        &self.addr
+    pub fn addr(&self) -> SocketAddr {
+        let (addr, port) = self.addr;
+        SocketAddr::new(addr, port)
     }
 
     pub fn backlog(&self) -> i32 {
@@ -76,8 +77,9 @@ pub struct MonitoringConfig {
 }
 
 impl MonitoringConfig {
-    pub fn addr(&self) -> &(IpAddr, u16) {
-        &self.addr
+    pub fn addr(&self) -> SocketAddr {
+        let (addr, port) = self.addr;
+        SocketAddr::new(addr, port)
     }
 }
 

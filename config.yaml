@@ -3,9 +3,9 @@ network:
   # Tuple of an IP address with port for HTTP listener to bind on.
   # Note that binding on `::` will bind on `0.0.0.0` too as long as
   # the `net.ipv6.bindv6only` sysctl is set to 0 (default).
-  addr: ["::", 8080]
+  addr: ["::1", 8080]
   # Limit for the queue of incoming connections.
-  backlog: 128
+  backlog: 1024
 
 # Number of worker threads.
 # The proxy uses main thread for accepting connections and `threads` threads
