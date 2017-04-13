@@ -1,5 +1,6 @@
 //! Roadmap:
 //! - [x] code style.
+//! - [x] GET config.
 //! - [ ] decomposition.
 //! - [ ] basic metrics: counters, rates.
 //! - [ ] enable application services.
@@ -582,7 +583,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
         .expose(proxy, factory)?
-        .expose(monitoring, MonitorServiceFactoryFactory)?
+        .expose(monitoring, MonitorServiceFactoryFactory::new(config))?
         .run()?;
 
     Ok(())

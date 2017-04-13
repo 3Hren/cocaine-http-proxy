@@ -11,6 +11,7 @@ extern crate rmpv;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde_json;
 extern crate serde_yaml;
 
 #[macro_use(o, slog_log, slog_info, slog_warn)]
