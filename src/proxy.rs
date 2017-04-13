@@ -51,6 +51,7 @@ use service::{ServiceFactory, ServiceFactorySpawn};
 use service::monitor::MonitorServiceFactoryFactory;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
+header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
 
 enum Event {
     Service {
@@ -83,7 +84,7 @@ impl Route for MainRoute {
 
     fn process(&self, req: &Request) -> Option<Self::Future> {
         let service = req.headers().get::<XCocaineService>();
-        let event = req.headers().get::<XCocaineService>();
+        let event = req.headers().get::<XCocaineEvent>();
 
         match (service, event) {
             (Some(service), Some(event)) => {
@@ -118,9 +119,9 @@ impl Route for MainRoute {
                 self.txs[rolled].send(ev).unwrap();
 
                 let log = AccessLogger::new(self.log.clone(), req);
-                let future = rx.and_then(move |(mut res, status, bytes_sent)| {
+                let future = rx.and_then(move |(mut res, bytes_sent)| {
                     res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-                    log.commit(x, status, bytes_sent);
+                    log.commit(x, res.status().into(), bytes_sent);
                     Ok(res)
                 }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
@@ -165,9 +166,9 @@ impl Route for GeobaseRoute {
         self.txs[rolled].send(ev).unwrap();
 
         let log = AccessLogger::new(self.log.clone(), req);
-        let future = rx.and_then(move |(mut res, status, bytes_sent)| {
+        let future = rx.and_then(move |(mut res, bytes_sent)| {
             res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(x, status, bytes_sent);
+            log.commit(x, res.status().into(), bytes_sent);
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
@@ -206,7 +207,7 @@ impl Drop for ProxyService {
 }
 
 struct SingleChunkReadDispatch {
-    tx: oneshot::Sender<(Response, u32, u64)>,
+    tx: oneshot::Sender<(Response, u64)>,
 }
 
 impl Dispatch for SingleChunkReadDispatch {
@@ -229,7 +230,7 @@ impl Dispatch for SingleChunkReadDispatch {
         res.set_status(StatusCode::from_u16(code as u16));
         res.set_body(body);
 
-        drop(self.tx.send((res, code, body_len)));
+        drop(self.tx.send((res, body_len)));
 
         None
     }
@@ -242,12 +243,12 @@ impl Dispatch for SingleChunkReadDispatch {
         res.set_status(StatusCode::InternalServerError);
         res.set_body(body);
 
-        drop(self.tx.send((res, 500, body_len)));
+        drop(self.tx.send((res, body_len)));
     }
 }
 
 struct AppReadDispatch {
-    tx: oneshot::Sender<(Response, u32, u64)>,
+    tx: oneshot::Sender<(Response, u64)>,
     body: Option<Vec<u8>>,
     response: Option<Response>,
 }
@@ -284,7 +285,7 @@ impl Dispatch for AppReadDispatch {
 
                 let mut res = self.response.take().unwrap();
                 res.set_body(body);
-                drop(self.tx.send((res, 200, body_len)));
+                drop(self.tx.send((res, body_len)));
                 None
             }
             Err(err) => {
@@ -294,7 +295,7 @@ impl Dispatch for AppReadDispatch {
                 let res = Response::new()
                     .with_status(StatusCode::InternalServerError)
                     .with_body(body);
-                drop(self.tx.send((res, 500, body_len)));
+                drop(self.tx.send((res, body_len)));
                 None
             }
         }
@@ -307,7 +308,7 @@ impl Dispatch for AppReadDispatch {
         let res = Response::new()
             .with_status(StatusCode::InternalServerError)
             .with_body(body);
-        drop(self.tx.send((res, 500, body_len)));
+        drop(self.tx.send((res, body_len)));
     }
 }
 
