@@ -33,7 +33,6 @@ use config::Config;
 
 mod config;
 mod logging;
-mod monitoring;
 mod proxy;
 mod server;
 mod service;

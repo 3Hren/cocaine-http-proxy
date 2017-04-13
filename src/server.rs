@@ -1,3 +1,5 @@
+//! HTTP Server
+
 use std::cell::RefCell;
 use std::io::{self};
 use std::net::SocketAddr;
@@ -293,22 +295,18 @@ impl ServerGroup {
     pub fn run_until<F>(mut self, cancel: F) -> Result<(), io::Error>
         where F: Future<Item = (), Error = ()>
     {
-        let mut listeners = Vec::new();
-
-        for (listener, dispatchers) in self.servers {
+        let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
             let mut iter = dispatchers.into_iter().cycle();
-            let listener = listener.incoming().for_each(move |(sock, addr)| {
+            listener.incoming().for_each(move |(sock, addr)| {
                 iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
                 Ok(())
-            });
+            })
+        });
 
-            listeners.push(listener);
-        }
-
-        let main = future::join_all(listeners).and_then(|vec| Ok(drop(vec)));
-
+        let listen = future::join_all(listeners).and_then(|vec| Ok(drop(vec)));
         let cancel = cancel.then(|result| Ok(drop(result)));
-        self.core.run(main.select(cancel).map_err(|(err, ..)| err))?;
+
+        self.core.run(listen.select(cancel).map_err(|(err, ..)| err))?;
 
         println!("Before join");
 

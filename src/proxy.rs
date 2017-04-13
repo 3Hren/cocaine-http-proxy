@@ -1,16 +1,16 @@
 //! Roadmap:
-//! - code style.
-//! - basic metrics: counters, rates.
-//! - enable application services.
-//! - request timeouts.
-//! - RG support for immediate updates.
-//! - unicorn support for tracing.
-//! - unicorn support for timeouts.
-//! - retry policy for applications.
-//! - smart reconnection in the pool.
-//! - decomposition.
-//! - metrics: histograms.
-//! - plugin system.
+//! - [x] code style.
+//! - [ ] decomposition.
+//! - [ ] basic metrics: counters, rates.
+//! - [ ] enable application services.
+//! - [ ] request timeouts.
+//! - [ ] RG support for immediate updates.
+//! - [ ] unicorn support for tracing.
+//! - [ ] unicorn support for timeouts.
+//! - [ ] retry policy for applications.
+//! - [ ] smart reconnection in the pool.
+//! - [ ] metrics: histograms.
+//! - [ ] plugin system.
 
 use std;
 use std::borrow::{Cow};
@@ -46,9 +46,9 @@ use cocaine::logging::{Logger, Severity};
 
 use config::Config;
 use logging::{AccessLogger, Loggers};
-use monitoring::MonitoringServiceFactoryFactory;
 use server::{ServerBuilder, ServerGroup};
 use service::{ServiceFactory, ServiceFactoryFactory};
+use service::monitor::MonitoringServiceFactoryFactory;
 
 type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
 
@@ -344,7 +344,6 @@ impl ServicePool {
 /// - Timers.
 /// - Unicorn notifiers.
 /// - RG notifiers.
-#[must_use = "futures do nothing unless polled"]
 struct Infinity {
     handle: Handle,
     rx: mpsc::UnboundedReceiver<Event>,
@@ -401,28 +400,6 @@ impl Future for Infinity {
     }
 }
 
-struct ProxyServiceFactoryFactory {
-    rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
-    log: Logger,
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
-}
-
-impl ServiceFactoryFactory for ProxyServiceFactoryFactory {
-    type Factory = ProxyServiceFactory;
-
-    fn create_factory(&self, handle: &Handle) -> Self::Factory {
-        let rx = self.rx.lock().unwrap().next()
-            .expect("number of event channels must be exactly the same as the number of threads");
-
-        // This will stop after all associated connections are closed.
-        handle.spawn(Infinity::new(handle.clone(), rx));
-        ProxyServiceFactory {
-            log: self.log.clone(),
-            routes: self.routes.clone(),
-        }
-    }
-}
-
 #[derive(Clone)]
 struct ProxyServiceFactory {
     log: Logger,
@@ -446,6 +423,28 @@ impl ServiceFactory for ProxyServiceFactory {
         };
 
         Ok(service)
+    }
+}
+
+struct ProxyServiceFactoryFactory {
+    rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
+    log: Logger,
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
+}
+
+impl ServiceFactoryFactory for ProxyServiceFactoryFactory {
+    type Factory = ProxyServiceFactory;
+
+    fn create_factory(&self, handle: &Handle) -> Self::Factory {
+        let rx = self.rx.lock().unwrap().next()
+            .expect("number of event channels must be exactly the same as the number of threads");
+
+        // This will stop after all associated connections are closed.
+        handle.spawn(Infinity::new(handle.clone(), rx));
+        ProxyServiceFactory {
+            log: self.log.clone(),
+            routes: self.routes.clone(),
+        }
     }
 }
 
@@ -493,11 +492,18 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
         }
     }
 
+    let lg = log.new(o!("Service" => "unicorn"));
+    match check_connection("unicorn", locator_addrs.clone(), &mut core) {
+        Ok(()) => slog_info!(lg, "configured unicorn service"),
+        Err(err) => {
+            incomplete = true;
+            slog_warn!(lg, "failed to establish connection to the unicorn service: {}", err);
+        }
+    }
+
     if incomplete {
         slog_warn!(log, "some of required services has failed checking - ensure that `cocaine-runtime` is running and properly configured");
     }
-
-    // TODO: Check connection to unicorn service.
 
     slog_info!(log, "launching ...");
 
@@ -540,9 +546,10 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let proxy = ServerBuilder::new(config.network().addr())
         .backlog(config.network().backlog())
         .threads(config.threads());
-    let monitoring = ServerBuilder::new(config.monitoring().addr());
+    let monitoring = ServerBuilder::new(config.monitoring().addr())
+        .threads(1);
 
-    //    cocaine_log!(log.common, Severity::Info, "started HTTP proxy at {}", addr);
+    cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
         .expose(proxy, factory)?
         .expose(monitoring, MonitoringServiceFactoryFactory)?
