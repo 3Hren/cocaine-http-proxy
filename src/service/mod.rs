@@ -30,14 +30,18 @@ pub trait ServiceFactory {
 }
 
 /// Creates new `ServiceFactory` values.
-pub trait ServiceFactoryFactory: Send + Sync {
+pub trait ServiceFactorySpawn: Send + Sync {
     type Factory: ServiceFactory;
 
     /// Creates a new service factory.
+    ///
+    /// This is called during server initialization on each thread start. A `Handle` provided can
+    /// be used to spawn additional services or to bind some asynchronous context with the event
+    /// loop that will be associated with the thread spawned.
     fn create_factory(&self, handle: &Handle) -> Self::Factory;
 }
 
-impl<F: ServiceFactoryFactory> ServiceFactoryFactory for Arc<F> {
+impl<F: ServiceFactorySpawn> ServiceFactorySpawn for Arc<F> {
     type Factory = F::Factory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {

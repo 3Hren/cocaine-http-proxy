@@ -47,7 +47,7 @@ use cocaine::logging::{Logger, Severity};
 use config::Config;
 use logging::{AccessLogger, Loggers};
 use server::{ServerBuilder, ServerGroup};
-use service::{ServiceFactory, ServiceFactoryFactory};
+use service::{ServiceFactory, ServiceFactorySpawn};
 use service::monitor::MonitoringServiceFactoryFactory;
 
 type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
@@ -432,7 +432,7 @@ struct ProxyServiceFactoryFactory {
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
-impl ServiceFactoryFactory for ProxyServiceFactoryFactory {
+impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
     type Factory = ProxyServiceFactory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {

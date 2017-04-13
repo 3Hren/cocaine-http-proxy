@@ -23,7 +23,7 @@ use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_service::Service;
 
-use service::{ServiceFactory, ServiceFactoryFactory};
+use service::{ServiceFactory, ServiceFactorySpawn};
 
 const DEFAULT_BACKLOG: i32 = 1024;
 
@@ -230,7 +230,7 @@ impl ServerGroup {
     /// 1. Binds socket, starts listening.
     /// 2. Spawns worker thread(s).
     pub fn expose<F, T>(mut self, builder: ServerBuilder, factory: F) -> Result<Self, io::Error>
-        where F: ServiceFactoryFactory<Factory = T> + 'static,
+        where F: ServiceFactorySpawn<Factory = T> + 'static,
               T: ServiceFactory<Request = Request, Response = Response, Error = hyper::Error> + 'static
     {
         let listener = bind(builder.addr, builder.backlog, &self.core.handle())?;

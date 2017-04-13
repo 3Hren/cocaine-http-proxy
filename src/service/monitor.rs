@@ -9,7 +9,7 @@ use tokio_service::Service;
 use hyper::{self, Method, StatusCode};
 use hyper::server::{Request, Response};
 
-use service::{ServiceFactory, ServiceFactoryFactory};
+use service::{ServiceFactory, ServiceFactorySpawn};
 
 #[derive(Debug)]
 pub struct Handler;
@@ -47,7 +47,7 @@ impl ServiceFactory for MonitoringServiceFactory {
 #[derive(Debug)]
 pub struct MonitoringServiceFactoryFactory;
 
-impl ServiceFactoryFactory for MonitoringServiceFactoryFactory {
+impl ServiceFactorySpawn for MonitoringServiceFactoryFactory {
     type Factory = MonitoringServiceFactory;
 
     fn create_factory(&self, _handle: &Handle) -> Self::Factory {
