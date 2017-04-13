@@ -50,7 +50,12 @@ use server::{ServerBuilder, ServerGroup};
 use service::{ServiceFactory, ServiceFactorySpawn};
 use service::monitor::MonitorServiceFactoryFactory;
 
-type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
+enum Event {
+    Service {
+        name: String,
+        func: Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>,
+    }
+}
 
 trait Route: Send + Sync {
     type Future: Future<Item = Response, Error = hyper::Error>;
@@ -131,16 +136,22 @@ impl Route for GeobaseRoute {
 
     fn process(&self, req: &Request) -> Option<Self::Future> {
         let (tx, rx) = oneshot::channel();
+
+        let ev = Event::Service {
+            name: "geobase".into(),
+            func: box move |service: &cocaine::Service| {
+                let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
+                    .then(|tx| {
+                        drop(tx);
+                        Ok(())
+                    });
+                future.boxed()
+            },
+        };
+
         let x = rand::random::<usize>();
         let rolled = x % self.txs.len();
-        self.txs[rolled].send(("geobase".into(), box move |service: &cocaine::Service| {
-            let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
-                .then(|tx| {
-                    drop(tx);
-                    Ok(())
-                });
-            future.boxed()
-        })).unwrap();
+        self.txs[rolled].send(ev).unwrap();
 
         let log = AccessLogger::new(self.log.clone(), req);
         let future = rx.and_then(move |(mut res, status, bytes_sent)| {
@@ -376,7 +387,7 @@ impl Future for Infinity {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
             match self.rx.poll() {
-                Ok(Async::Ready(Some((name, func)))) => {
+                Ok(Async::Ready(Some(Event::Service { name, func }))) => {
                     // Select the next service that is not reconnecting right now. No more than N/2
                     // services can be in reconnecting state concurrently.
                     let handle = self.handle.clone();
