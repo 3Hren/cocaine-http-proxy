@@ -52,7 +52,7 @@ impl AccessLogger {
             birth: Instant::now(),
             method: req.method().as_ref().to_owned(),
             path: req.path().to_owned(),
-            version: format!("HTTP/1.{}", req.version()),
+            version: format!("{}", req.version()),
             log: log,
         }
     }
