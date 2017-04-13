@@ -28,6 +28,7 @@ use rand;
 use futures::{future, Async, Future, Poll, Stream};
 use futures::sync::{oneshot, mpsc};
 use hyper::{self, StatusCode};
+use hyper::header::ContentLength;
 use hyper::server::{Request, Response};
 use itertools::Itertools;
 use tokio_core::reactor::{Core, Handle};
@@ -228,6 +229,7 @@ impl Dispatch for SingleChunkReadDispatch {
 
         let mut res = Response::new();
         res.set_status(StatusCode::from_u16(code as u16));
+        res.headers_mut().set(ContentLength(body_len));
         res.set_body(body);
 
         drop(self.tx.send((res, body_len)));
@@ -247,16 +249,16 @@ impl Dispatch for SingleChunkReadDispatch {
     }
 }
 
-struct AppReadDispatch {
-    tx: oneshot::Sender<(Response, u64)>,
-    body: Option<Vec<u8>>,
-    response: Option<Response>,
-}
-
 #[derive(Deserialize)]
 struct MetaInfo {
     code: u32,
     headers: Vec<(String, String)>
+}
+
+struct AppReadDispatch {
+    tx: oneshot::Sender<(Response, u64)>,
+    body: Option<Vec<u8>>,
+    response: Option<Response>,
 }
 
 impl Dispatch for AppReadDispatch {
