@@ -12,9 +12,9 @@ use hyper::server::{Request, Response};
 use service::{ServiceFactory, ServiceFactorySpawn};
 
 #[derive(Debug)]
-pub struct Handler;
+pub struct MonitorService;
 
-impl Service for Handler {
+impl Service for MonitorService {
     type Request  = Request;
     type Response = Response;
     type Error    = hyper::Error;
@@ -31,26 +31,26 @@ impl Service for Handler {
 }
 
 #[derive(Debug)]
-pub struct MonitoringServiceFactory;
+pub struct MonitorServiceFactory;
 
-impl ServiceFactory for MonitoringServiceFactory {
+impl ServiceFactory for MonitorServiceFactory {
     type Request  = Request;
     type Response = Response;
-    type Instance = Handler;
+    type Instance = MonitorService;
     type Error    = hyper::Error;
 
     fn create_service(&mut self, _addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
-        Ok(Handler)
+        Ok(MonitorService)
     }
 }
 
 #[derive(Debug)]
-pub struct MonitoringServiceFactoryFactory;
+pub struct MonitorServiceFactoryFactory;
 
-impl ServiceFactorySpawn for MonitoringServiceFactoryFactory {
-    type Factory = MonitoringServiceFactory;
+impl ServiceFactorySpawn for MonitorServiceFactoryFactory {
+    type Factory = MonitorServiceFactory;
 
     fn create_factory(&self, _handle: &Handle) -> Self::Factory {
-        MonitoringServiceFactory
+        MonitorServiceFactory
     }
 }

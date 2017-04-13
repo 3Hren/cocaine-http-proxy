@@ -48,7 +48,7 @@ use config::Config;
 use logging::{AccessLogger, Loggers};
 use server::{ServerBuilder, ServerGroup};
 use service::{ServiceFactory, ServiceFactorySpawn};
-use service::monitor::MonitoringServiceFactoryFactory;
+use service::monitor::MonitorServiceFactoryFactory;
 
 type Event = (String, Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>);
 
@@ -552,7 +552,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
         .expose(proxy, factory)?
-        .expose(monitoring, MonitoringServiceFactoryFactory)?
+        .expose(monitoring, MonitorServiceFactoryFactory)?
         .run()?;
 
     Ok(())
