@@ -21,6 +21,7 @@ extern crate tokio_proto;
 extern crate tokio_service;
 extern crate itertools;
 extern crate net2;
+#[macro_use]
 extern crate hyper;
 extern crate num_cpus;
 
