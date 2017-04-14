@@ -3,7 +3,7 @@
 //! - [x] GET config.
 //! - [ ] decomposition.
 //! - [ ] basic metrics: counters, rates.
-//! - [ ] enable application services.
+//! - [x] enable application services.
 //! - [ ] request timeouts.
 //! - [ ] RG support for immediate updates.
 //! - [ ] unicorn support for tracing.
@@ -13,23 +13,24 @@
 //! - [ ] metrics: histograms.
 //! - [ ] plugin system.
 
-use std;
+// route/mod.rs
+// route/app.rs
+// route/jsonrpc.rs
+// route/performance.rs
+
+// service/proxy.rs
+
 use std::borrow::{Cow};
-use std::boxed::FnBox;
-use std::collections::HashMap;
 use std::error;
 use std::io::{self, ErrorKind};
-use std::mem;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 use std::vec::IntoIter;
 
 use rand;
-use futures::{future, Async, Future, Poll, Stream};
+use futures::{future, Future};
 use futures::sync::{oneshot, mpsc};
 use hyper::{self, StatusCode};
-use hyper::header::ContentLength;
 use hyper::server::{Request, Response};
 use itertools::Itertools;
 use tokio_core::reactor::{Core, Handle};
@@ -48,6 +49,9 @@ use cocaine::logging::{Logger, Severity};
 
 use config::Config;
 use logging::{AccessLogger, Loggers};
+use pool::{Event, PoolTask};
+use route::Route;
+use route::performance::PerformanceRoute;
 use server::{ServerBuilder, ServerGroup};
 use service::{ServiceFactory, ServiceFactorySpawn};
 use service::monitor::MonitorServiceFactoryFactory;
@@ -55,27 +59,7 @@ use service::monitor::MonitorServiceFactoryFactory;
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
 
-enum Event {
-    Service {
-        name: String,
-        func: Box<FnBox(&cocaine::Service) -> Box<Future<Item=(), Error=()> + Send> + Send>,
-    }
-}
-
-trait Route: Send + Sync {
-    type Future: Future<Item = Response, Error = hyper::Error>;
-
-    /// Tries to process the request, returning a future (doesn't matter success or not) on
-    /// conditions match, `None` otherwise.
-    ///
-    /// A route can process the request fully if all conditions are met, for example if it requires
-    /// some headers and all of them are specified.
-    /// Also it may decide to fail the request, because of incomplete prerequisites, for example if
-    /// it detects all required headers, but fails to match the request method.
-    /// At last a route can be neutral to the request, returning `None`.
-    fn process(&self, request: &Request) -> Option<Self::Future>;
-}
-
+// TODO: Move to route/app.rs
 struct MainRoute {
     txs: Vec<mpsc::UnboundedSender<Event>>,
     log: Logger,
@@ -140,46 +124,10 @@ impl Route for MainRoute {
     }
 }
 
-struct GeobaseRoute {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
-    log: Logger,
-}
-
-impl Route for GeobaseRoute {
-    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
-
-    fn process(&self, req: &Request) -> Option<Self::Future> {
-        let (tx, rx) = oneshot::channel();
-
-        let ev = Event::Service {
-            name: "geobase".into(),
-            func: box move |service: &cocaine::Service| {
-                let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
-                    .then(|tx| {
-                        drop(tx);
-                        Ok(())
-                    });
-                future.boxed()
-            },
-        };
-
-        let x = rand::random::<usize>();
-        let rolled = x % self.txs.len();
-        self.txs[rolled].send(ev).unwrap();
-
-        let log = AccessLogger::new(self.log.clone(), req);
-        let future = rx.and_then(move |(mut res, bytes_sent)| {
-            res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(x, res.status().into(), bytes_sent);
-            Ok(res)
-        }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
-
-        Some(future.boxed())
-    }
-}
-
+// TODO: Move to service/proxy.rs
 struct ProxyService {
     log: Logger,
+    metrics: Arc<Metrics>,
     addr: Option<SocketAddr>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
@@ -203,50 +151,8 @@ impl Service for ProxyService {
 
 impl Drop for ProxyService {
     fn drop(&mut self) {
-        // TODO: We can also log the following info: duration, metrics.
+        self.metrics.connections.active.add(-1);
         cocaine_log!(self.log, Severity::Info, "closed connection from {}", self.addr.take().unwrap());
-    }
-}
-
-struct SingleChunkReadDispatch {
-    tx: oneshot::Sender<(Response, u64)>,
-}
-
-impl Dispatch for SingleChunkReadDispatch {
-    fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        let (code, body) = match ty {
-            0 => {
-                (200, format!("{}", data))
-            }
-            1 => {
-                (500, format!("{}", data))
-            }
-            m => {
-                (500, format!("unknown type: {} {}", m, data))
-            }
-        };
-
-        let body_len = body.as_bytes().len() as u64;
-
-        let mut res = Response::new();
-        res.set_status(StatusCode::from_u16(code as u16));
-        res.headers_mut().set(ContentLength(body_len));
-        res.set_body(body);
-
-        drop(self.tx.send((res, body_len)));
-
-        None
-    }
-
-    fn discard(self: Box<Self>, err: &Error) {
-        let body = format!("{}", err);
-        let body_len = body.as_bytes().len() as u64;
-
-        let mut res = Response::new();
-        res.set_status(StatusCode::InternalServerError);
-        res.set_body(body);
-
-        drop(self.tx.send((res, body_len)));
     }
 }
 
@@ -315,128 +221,10 @@ impl Dispatch for AppReadDispatch {
     }
 }
 
-struct ServicePool {
-    /// Next service.
-    counter: usize,
-    name: String,
-    /// Reconnect threshold.
-    threshold: Duration,
-    handle: Handle,
-    last_traverse: SystemTime,
-
-    services: Vec<(cocaine::Service, SystemTime)>,
-}
-
-impl ServicePool {
-    fn new(name: String, limit: usize, handle: &Handle) -> Self {
-        let now = SystemTime::now();
-
-        Self {
-            counter: 0,
-            name: name.clone(),
-            threshold: Duration::new(60, 0),
-            handle: handle.clone(),
-            last_traverse: now,
-            services: std::iter::repeat(name)
-                .take(limit)
-                .map(|name| (cocaine::Service::new(name.clone(), handle), now))
-                .collect()
-        }
-    }
-
-    fn next(&mut self) -> &cocaine::Service {
-        let now = SystemTime::now();
-
-        // No often than every 5 seconds we're traversing services for reconnection.
-        if now.duration_since(self.last_traverse).unwrap() > Duration::new(5, 0) {
-            self.last_traverse = now;
-
-            let mut killed = 0;
-
-            let kill_limit = self.services.len() / 2;
-            for &mut (ref mut service, ref mut birth) in self.services.iter_mut() {
-                if now.duration_since(*birth).unwrap() > self.threshold {
-                    killed += 1;
-                    mem::replace(birth, now);
-                    mem::replace(service, cocaine::Service::new(self.name.clone(), &self.handle));
-
-                    if killed > kill_limit {
-                        break;
-                    }
-                }
-                // TODO: Tiny pre-connection optimizations.
-            }
-        }
-
-        self.counter = (self.counter + 1) % self.services.len();
-        &self.services[self.counter].0
-    }
-}
-
-/// This one lives until all associated senders live:
-/// - HTTP handlers.
-/// - Timers.
-/// - Unicorn notifiers.
-/// - RG notifiers.
-struct Infinity {
-    handle: Handle,
-    rx: mpsc::UnboundedReceiver<Event>,
-
-    pool: HashMap<String, ServicePool>,
-}
-
-impl Infinity {
-    fn new(handle: Handle, rx: mpsc::UnboundedReceiver<Event>) -> Self {
-        Self {
-            handle: handle,
-            rx: rx,
-            pool: HashMap::new(),
-        }
-    }
-}
-
-impl Infinity {
-    fn select_service(&mut self, name: String, handle: &Handle) -> &cocaine::Service {
-        let mut pool = self.pool.entry(name.clone())
-            .or_insert_with(|| ServicePool::new(name, 10, handle));
-        pool.next()
-    }
-}
-
-impl Future for Infinity {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.rx.poll() {
-                Ok(Async::Ready(Some(Event::Service { name, func }))) => {
-                    // Select the next service that is not reconnecting right now. No more than N/2
-                    // services can be in reconnecting state concurrently.
-                    let handle = self.handle.clone();
-                    let ref service = self.select_service(name, &handle);
-
-                    handle.spawn(func.call_box((service,)));
-                }
-                // TODO: RG updates.
-                // TODO: Unicorn timeout updates.
-                // TODO: Unicorn tracing chance updates.
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Ok(Async::Ready(None)) | Err(..) => {
-                    return Ok(Async::Ready(()));
-                }
-            }
-        }
-
-        Ok(Async::NotReady)
-    }
-}
-
 #[derive(Clone)]
 struct ProxyServiceFactory {
     log: Logger,
+    metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
@@ -447,11 +235,13 @@ impl ServiceFactory for ProxyServiceFactory {
     type Error    = hyper::Error;
 
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
+        self.metrics.connections.accepted.add(1);
+        self.metrics.connections.active.add(1);
         cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr.unwrap());
-        // TODO: Increment accepted connections counter.
 
         let service = ProxyService {
             log: self.log.clone(),
+            metrics: self.metrics.clone(),
             addr: addr,
             routes: self.routes.clone(),
         };
@@ -463,6 +253,7 @@ impl ServiceFactory for ProxyServiceFactory {
 struct ProxyServiceFactoryFactory {
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
     log: Logger,
+    metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
 
@@ -474,9 +265,10 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
             .expect("number of event channels must be exactly the same as the number of threads");
 
         // This will stop after all associated connections are closed.
-        handle.spawn(Infinity::new(handle.clone(), rx));
+        handle.spawn(PoolTask::new(handle.clone(), rx));
         ProxyServiceFactory {
             log: self.log.clone(),
+            metrics: self.metrics.clone(),
             routes: self.routes.clone(),
         }
     }
@@ -544,6 +336,28 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
     Ok(())
 }
 
+use serde::Serializer;
+use metrics::{Count, Counter};
+
+#[derive(Debug, Default, Serialize)]
+struct ConnectionMetrics {
+    #[serde(serialize_with = "serialize_counter")]
+    active: Counter,
+    #[serde(serialize_with = "serialize_counter")]
+    accepted: Counter,
+}
+
+fn serialize_counter<S>(counter: &Counter, se: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    se.serialize_i64(counter.get())
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct Metrics {
+    connections: ConnectionMetrics,
+}
+
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let locator_addrs = config.locators()
         .iter()
@@ -553,6 +367,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     check_prerequisites(&config, &locator_addrs)?;
 
     let log = Loggers::from(config.logging());
+    let metrics = Arc::new(Metrics::default());
 
     let mut txs = Vec::new();
     let mut rxs = Vec::new();
@@ -566,11 +381,12 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // let routes = make_routes(txs);
     let mut routes = Vec::new();
     routes.push(Arc::new(MainRoute { txs: txs.clone(), log: log.access().clone() }) as Arc<_>);
-    routes.push(Arc::new(GeobaseRoute { txs: txs, log: log.access().clone() }) as Arc<_>);
+    routes.push(Arc::new(PerformanceRoute::new(txs, log.access().clone())) as Arc<_>);
 
     let factory = Arc::new(ProxyServiceFactoryFactory {
         rx: Mutex::new(rxs.into_iter()),
         log: log.common().clone(),
+        metrics: metrics.clone(),
         routes: routes,
     });
 
@@ -583,7 +399,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
         .expose(proxy, factory)?
-        .expose(monitoring, MonitorServiceFactoryFactory::new(config))?
+        .expose(monitoring, MonitorServiceFactoryFactory::new(config, metrics))?
         .run()?;
 
     Ok(())

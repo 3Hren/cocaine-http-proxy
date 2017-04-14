@@ -1,4 +1,4 @@
-#![feature(box_syntax, fnbox)]
+#![feature(box_syntax, fnbox, integer_atomics)]
 
 extern crate rand;
 extern crate log;
@@ -35,7 +35,10 @@ use config::Config;
 
 mod config;
 mod logging;
+mod metrics;
+mod pool;
 mod proxy;
+mod route;
 mod server;
 mod service;
 
