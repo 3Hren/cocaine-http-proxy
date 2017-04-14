@@ -4,9 +4,9 @@ use std::path::Path;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-use serde_yaml;
 use serde::Serializer;
 use serde::de::{self, Deserialize, Deserializer};
+use serde_yaml;
 
 use cocaine::logging::Severity;
 
