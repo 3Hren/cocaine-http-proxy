@@ -1,6 +1,5 @@
 use std::io;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use tokio_core::reactor::Handle;
@@ -80,6 +79,6 @@ impl<F: ServiceFactorySpawn> ServiceFactorySpawn for Arc<F> {
     type Factory = F::Factory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {
-        self.deref().create_factory(handle)
+        (**self).create_factory(handle)
     }
 }
