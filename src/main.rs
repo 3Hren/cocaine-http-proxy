@@ -1,5 +1,6 @@
 #![feature(box_syntax, fnbox, integer_atomics)]
 
+extern crate time;
 extern crate rand;
 extern crate log;
 

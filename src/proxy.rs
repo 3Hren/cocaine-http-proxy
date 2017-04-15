@@ -139,6 +139,8 @@ impl Service for ProxyService {
     type Future   = Box<Future<Item = Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
+        self.metrics.requests.mark(1);
+
         for route in &self.routes {
             if let Some(future) = route.process(&req) {
                 return future;
@@ -337,7 +339,8 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
 }
 
 use serde::Serializer;
-use metrics::{Count, Counter};
+use serde::ser::SerializeMap;
+use metrics::{Count, Counter, Meter, RateMeter};
 
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {
@@ -353,9 +356,27 @@ fn serialize_counter<S>(counter: &Counter, se: S) -> Result<S::Ok, S::Error>
     se.serialize_i64(counter.get())
 }
 
+fn serialize_meter<S>(meter: &RateMeter, se: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    let mut map = se.serialize_map(Some(4))?;
+    map.serialize_key("count")?;
+    map.serialize_value(&meter.count())?;
+    map.serialize_key("m01rate")?;
+    map.serialize_value(&meter.m01rate())?;
+    map.serialize_key("m05rate")?;
+    map.serialize_value(&meter.m05rate())?;
+    map.serialize_key("m15rate")?;
+    map.serialize_value(&meter.m15rate())?;
+    map.end()
+}
+
+
 #[derive(Debug, Default, Serialize)]
 pub struct Metrics {
     connections: ConnectionMetrics,
+    #[serde(serialize_with = "serialize_meter")]
+    requests: RateMeter,
 }
 
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
@@ -399,7 +420,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
         .expose(proxy, factory)?
-        .expose(monitoring, MonitorServiceFactoryFactory::new(config, metrics))?
+        .expose(monitoring, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
         .run()?;
 
     Ok(())

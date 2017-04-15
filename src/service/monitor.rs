@@ -19,34 +19,34 @@ use config::Config;
 use proxy::Metrics;
 use service::{ServiceFactory, ServiceFactorySpawn};
 
+fn response_json<T: Serialize>(value: &T) -> Response {
+    match serde_json::to_string(value) {
+        Ok(body) => {
+            Response::new()
+                .with_status(StatusCode::Ok)
+                .with_header(ContentType::json())
+                .with_header(ContentLength(body.len() as u64))
+                .with_body(body)
+        }
+        Err(err) => {
+            Response::new()
+                .with_status(StatusCode::InternalServerError)
+                .with_body(format!("{}", err))
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct MonitorService {
-    config: Config,
+    config: Arc<Config>,
     metrics: Arc<Metrics>,
 }
 
 impl MonitorService {
-    pub fn new(config: Config, metrics: Arc<Metrics>) -> Self {
+    pub fn new(config: Arc<Config>, metrics: Arc<Metrics>) -> Self {
         Self {
             config: config,
             metrics: metrics,
-        }
-    }
-
-    fn to_json<T: Serialize>(value: &T) -> Response {
-        match serde_json::to_string(value) {
-            Ok(body) => {
-                Response::new()
-                    .with_status(StatusCode::Ok)
-                    .with_header(ContentType::json())
-                    .with_header(ContentLength(body.len() as u64))
-                    .with_body(body)
-            }
-            Err(err) => {
-                Response::new()
-                    .with_status(StatusCode::InternalServerError)
-                    .with_body(format!("{}", err))
-            }
         }
     }
 }
@@ -60,8 +60,8 @@ impl Service for MonitorService {
     fn call(&self, req: Self::Request) -> Self::Future {
         let res = match (req.method(), req.path()) {
             (&Method::Get, "/ping") => Response::new().with_status(StatusCode::Ok),
-            (&Method::Get, "/config") => MonitorService::to_json(&self.config),
-            (&Method::Get, "/metrics") => MonitorService::to_json(&self.metrics),
+            (&Method::Get, "/config") => response_json(&self.config),
+            (&Method::Get, "/metrics") => response_json(&self.metrics),
             (..) => Response::new().with_status(StatusCode::NotFound),
         };
 
@@ -71,7 +71,7 @@ impl Service for MonitorService {
 
 #[derive(Debug)]
 pub struct MonitorServiceFactory {
-    config: Config,
+    config: Arc<Config>,
     metrics: Arc<Metrics>,
 }
 
@@ -88,12 +88,12 @@ impl ServiceFactory for MonitorServiceFactory {
 
 #[derive(Debug)]
 pub struct MonitorServiceFactoryFactory {
-    config: Config,
+    config: Arc<Config>,
     metrics: Arc<Metrics>,
 }
 
 impl MonitorServiceFactoryFactory {
-    pub fn new(config: Config, metrics: Arc<Metrics>) -> Self {
+    pub fn new(config: Arc<Config>, metrics: Arc<Metrics>) -> Self {
         Self {
             config: config,
             metrics: metrics,

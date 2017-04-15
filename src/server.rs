@@ -298,6 +298,7 @@ impl ServerGroup {
         let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
             let mut iter = dispatchers.into_iter().cycle();
             listener.incoming().for_each(move |(sock, addr)| {
+                sock.set_nodelay(true)?;
                 iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
                 Ok(())
             })
