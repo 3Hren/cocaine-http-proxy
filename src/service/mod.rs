@@ -27,6 +27,41 @@ pub trait ServiceFactory {
     ///
     /// In case of serving on Unix sockets `None` will be passed.
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error>;
+
+    fn map<F, U>(self, f: F) -> Map<Self, F>
+        where F: FnOnce(Self::Instance) -> U,
+              U: Service<Request = Self::Request, Response = Self::Response, Error = Self::Error>,
+              Self: Sized
+    {
+        Map {
+            factory: self,
+            f: Some(f),
+        }
+    }
+}
+
+pub struct Map<T, F>
+    where T: ServiceFactory
+{
+    factory: T,
+    f: Option<F>,
+}
+
+impl<T, F, U> ServiceFactory for Map<T, F>
+    where T: ServiceFactory,
+          F: FnOnce(T::Instance) -> U,
+          U: Service<Request = T::Request, Response = T::Response, Error = T::Error>
+{
+    type Request = T::Request;
+    type Response = T::Response;
+    type Error = T::Error;
+    type Instance = U;
+
+    fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
+        let service = self.factory.create_service(addr)?;
+        let wrapped = self.f.take().expect("")(service);
+        Ok(wrapped)
+    }
 }
 
 /// Creates new `ServiceFactory` values.

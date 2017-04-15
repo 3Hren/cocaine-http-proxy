@@ -1,8 +1,8 @@
 //! Roadmap:
 //! - [x] code style.
 //! - [x] GET config.
-//! - [ ] decomposition.
-//! - [ ] basic metrics: counters, rates.
+//! - [x] decomposition.
+//! - [x] basic metrics: counters, rates.
 //! - [x] enable application services.
 //! - [ ] request timeouts.
 //! - [ ] RG support for immediate updates.
@@ -12,13 +12,6 @@
 //! - [ ] smart reconnection in the pool.
 //! - [ ] metrics: histograms.
 //! - [ ] plugin system.
-
-// route/mod.rs
-// route/app.rs
-// route/jsonrpc.rs
-// route/performance.rs
-
-// service/proxy.rs
 
 use std::borrow::{Cow};
 use std::error;

@@ -85,24 +85,6 @@ impl<S: Service> Service for NotifyService<S> {
     }
 }
 
-struct NotifyServiceFactory<F> {
-    wrapped: F,
-    info: Rc<RefCell<Info>>,
-}
-
-impl<F: ServiceFactory> ServiceFactory for NotifyServiceFactory<F> {
-    type Request  = F::Request;
-    type Response = F::Response;
-    type Instance = NotifyService<F::Instance>;
-    type Error    = F::Error;
-
-    fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
-        let service = self.wrapped.create_service(addr)?;
-        let wrapped = NotifyService::new(service, &mut self.info);
-        Ok(wrapped)
-    }
-}
-
 struct WaitUntilZero {
     info: Rc<RefCell<Info>>,
 }
@@ -249,9 +231,11 @@ impl ServerGroup {
                 // Mini-future to track the number of active services.
                 let info = Rc::new(RefCell::new(Info::new()));
 
-                let factory = NotifyServiceFactory {
-                    wrapped: factory.create_factory(&handle),
-                    info: info.clone(),
+                let factory = {
+                    let mut info = info.clone();
+                    factory.create_factory(&handle).map(move |service| {
+                        NotifyService::new(service, &mut info)
+                    })
                 };
 
                 // This will stop just after listener is stopped, because it polls the connection
