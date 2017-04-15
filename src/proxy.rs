@@ -4,8 +4,8 @@
 //! - [x] decomposition.
 //! - [x] basic metrics: counters, rates.
 //! - [x] enable application services.
-//! - [ ] request timeouts.
 //! - [ ] RG support for immediate updates.
+//! - [ ] request timeouts.
 //! - [ ] unicorn support for tracing.
 //! - [ ] unicorn support for timeouts.
 //! - [ ] retry policy for applications.

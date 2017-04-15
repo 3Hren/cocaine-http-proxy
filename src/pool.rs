@@ -41,7 +41,7 @@ impl ServicePool {
             threshold: Duration::new(60, 0),
             handle: handle.clone(),
             last_traverse: now,
-            services:iter::repeat(name)
+            services: iter::repeat(name)
                 .take(limit)
                 .map(|name| (Service::new(name.clone(), handle), now))
                 .collect()
