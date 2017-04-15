@@ -75,7 +75,7 @@ pub trait ServiceFactorySpawn: Send + Sync {
     fn create_factory(&self, handle: &Handle) -> Self::Factory;
 }
 
-impl<F: ServiceFactorySpawn> ServiceFactorySpawn for Arc<F> {
+impl<F: ServiceFactorySpawn + ?Sized> ServiceFactorySpawn for Arc<F> {
     type Factory = F::Factory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {
