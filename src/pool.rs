@@ -39,8 +39,8 @@ struct ServicePool {
     /// Next service.
     counter: usize,
     name: String,
-    /// Reconnect threshold.
-    threshold: Duration,
+    /// Maximum service age.
+    lifetime: Duration,
     handle: Handle,
     last_traverse: SystemTime,
 
@@ -57,7 +57,7 @@ impl ServicePool {
         Self {
             counter: 0,
             name: name.clone(),
-            threshold: Duration::new(5, 0),
+            lifetime: Duration::new(5, 0),
             handle: handle.clone(),
             last_traverse: now,
             connecting: Arc::new(AtomicUsize::new(0)),
@@ -81,7 +81,7 @@ impl ServicePool {
             while self.connecting.load(Ordering::Relaxed) < self.connecting_limit {
                 match self.services.pop_front() {
                     Some(service) => {
-                        if now.duration_since(service.created_at).unwrap() > self.threshold {
+                        if now.duration_since(service.created_at).unwrap() > self.lifetime {
                             println!("reconnect");
                             self.connecting.fetch_add(1, Ordering::Relaxed);
 
