@@ -4,12 +4,12 @@
 //! - [x] decomposition.
 //! - [x] basic metrics: counters, rates.
 //! - [x] enable application services.
+//! - [x] smart reconnection in the pool.
 //! - [ ] RG support for immediate updates.
 //! - [ ] request timeouts.
 //! - [ ] unicorn support for tracing.
 //! - [ ] unicorn support for timeouts.
 //! - [ ] retry policy for applications.
-//! - [ ] smart reconnection in the pool.
 //! - [ ] metrics: histograms.
 //! - [ ] plugin system.
 
@@ -246,6 +246,7 @@ impl ServiceFactory for ProxyServiceFactory {
 }
 
 struct ProxyServiceFactoryFactory {
+    tx: Mutex<IntoIter<mpsc::UnboundedSender<Event>>>,
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
     log: Logger,
     metrics: Arc<Metrics>,
@@ -256,11 +257,13 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
     type Factory = ProxyServiceFactory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {
+        let tx = self.tx.lock().unwrap().next()
+            .expect("number of event channels must be exactly the same as the number of threads");
         let rx = self.rx.lock().unwrap().next()
             .expect("number of event channels must be exactly the same as the number of threads");
 
         // This will stop after all associated connections are closed.
-        handle.spawn(PoolTask::new(handle.clone(), rx));
+        handle.spawn(PoolTask::new(handle.clone(), tx, rx));
         ProxyServiceFactory {
             log: self.log.clone(),
             metrics: self.metrics.clone(),
@@ -395,9 +398,10 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // let routes = make_routes(txs);
     let mut routes = Vec::new();
     routes.push(Arc::new(MainRoute { txs: txs.clone(), log: log.access().clone() }) as Arc<_>);
-    routes.push(Arc::new(PerformanceRoute::new(txs, log.access().clone())) as Arc<_>);
+    routes.push(Arc::new(PerformanceRoute::new(txs.clone(), log.access().clone())) as Arc<_>);
 
     let factory = Arc::new(ProxyServiceFactoryFactory {
+        tx: Mutex::new(txs.clone().into_iter()),
         rx: Mutex::new(rxs.into_iter()),
         log: log.common().clone(),
         metrics: metrics.clone(),
