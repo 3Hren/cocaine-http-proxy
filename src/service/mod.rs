@@ -27,14 +27,19 @@ pub trait ServiceFactory {
     /// In case of serving on Unix sockets `None` will be passed.
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error>;
 
+    /// Map this `ServiceFactory` to a different `ServiceFactory`, which applies a mapping function
+    /// to each `Service` instance produced if `Ok`, returning a new one, leaving an `Err` value
+    /// untouched.
+    ///
+    /// Service's `Request`, `Response` and `Error` types must stay the same.
     fn map<F, U>(self, f: F) -> Map<Self, F>
-        where F: FnOnce(Self::Instance) -> U,
+        where F: FnMut(Self::Instance) -> U,
               U: Service<Request = Self::Request, Response = Self::Response, Error = Self::Error>,
               Self: Sized
     {
         Map {
             factory: self,
-            f: Some(f),
+            f: f,
         }
     }
 }
@@ -43,12 +48,12 @@ pub struct Map<T, F>
     where T: ServiceFactory
 {
     factory: T,
-    f: Option<F>,
+    f: F,
 }
 
 impl<T, F, U> ServiceFactory for Map<T, F>
     where T: ServiceFactory,
-          F: FnOnce(T::Instance) -> U,
+          F: FnMut(T::Instance) -> U,
           U: Service<Request = T::Request, Response = T::Response, Error = T::Error>
 {
     type Request = T::Request;
@@ -58,7 +63,7 @@ impl<T, F, U> ServiceFactory for Map<T, F>
 
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
         let service = self.factory.create_service(addr)?;
-        let wrapped = self.f.take().expect("")(service);
+        let wrapped = (self.f)(service);
         Ok(wrapped)
     }
 }
