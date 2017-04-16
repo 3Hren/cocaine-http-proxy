@@ -89,7 +89,6 @@ impl ServicePool {
                             let future = service.connect();
 
                             let tx = self.tx.clone();
-                            let connecting = self.connecting.clone();
                             self.handle.spawn(future.then(move |res| {
                                 if let Err(err) = res {
                                     // Okay, we've tried our best. Insert the service anyway,
@@ -99,7 +98,6 @@ impl ServicePool {
                                 }
 
                                 tx.send(Event::ServiceConnect(service)).unwrap();
-                                connecting.fetch_sub(1, Ordering::Relaxed);
                                 Ok(())
                             }));
                         } else {
@@ -182,6 +180,7 @@ impl Future for PoolTask {
                             println!("got `ServiceConnect` event for `{}`", service.name());
                             match self.pool.get_mut(service.name()) {
                                 Some(pool) => {
+                                    pool.connecting.fetch_sub(1, Ordering::Relaxed);
                                     pool.services.push_back(WatchedService::new(service, SystemTime::now()));
                                 }
                                 None => {
