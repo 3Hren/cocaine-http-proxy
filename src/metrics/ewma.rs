@@ -84,6 +84,11 @@ impl EWMA {
     }
 }
 
+fn _assert_send_sync() {
+    fn _assert<T: Send + Sync>(_: T) {}
+    _assert(EWMA::m01rate());
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -268,21 +273,5 @@ mod test {
 
         // 15 minute
         assert_eq!(within(&mut e, 0.2207276647028646247028654470286553f64), true);
-    }
-
-    #[test]
-    fn send() {
-        fn checker<T: Send>(_: T) {}
-
-        let ewma = EWMA::m01rate();
-        checker(ewma);
-    }
-
-    #[test]
-    fn sync() {
-        fn checker<T: Sync>(_: T) {}
-
-        let ewma = EWMA::m01rate();
-        checker(ewma);
     }
 }
