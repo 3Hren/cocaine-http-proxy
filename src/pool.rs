@@ -11,6 +11,7 @@ use futures::sync::mpsc;
 use tokio_core::reactor::Handle;
 
 use cocaine::Service;
+use cocaine::logging::{Logger, Severity};
 
 // TODO: Should not be public.
 pub enum Event {
@@ -36,6 +37,8 @@ impl WatchedService {
 }
 
 struct ServicePool {
+    log: Logger,
+
     /// Next service.
     counter: usize,
     name: String,
@@ -51,10 +54,11 @@ struct ServicePool {
 }
 
 impl ServicePool {
-    fn new(name: String, limit: usize, handle: &Handle, tx: mpsc::UnboundedSender<Event>) -> Self {
+    fn new(name: String, limit: usize, handle: &Handle, tx: mpsc::UnboundedSender<Event>, log: Logger) -> Self {
         let now = SystemTime::now();
 
         Self {
+            log: log,
             counter: 0,
             name: name.clone(),
             lifetime: Duration::new(5, 0),
@@ -82,19 +86,23 @@ impl ServicePool {
                 match self.services.pop_front() {
                     Some(service) => {
                         if now.duration_since(service.created_at).unwrap() > self.lifetime {
-                            println!("reconnect");
+                            cocaine_log!(self.log, Severity::Info, "reconnecting `{}` service", self.name);
                             self.connecting.fetch_add(1, Ordering::Relaxed);
 
                             let service = Service::new(self.name.clone(), &self.handle);
                             let future = service.connect();
 
                             let tx = self.tx.clone();
+                            let log = self.log.clone();
                             self.handle.spawn(future.then(move |res| {
-                                if let Err(err) = res {
-                                    // Okay, we've tried our best. Insert the service anyway,
-                                    // because internally it will try to establish connection
-                                    // before each invocation attempt.
-                                    println!("failed to reconnect `{}` service: {}", service.name(), err);
+                                match res {
+                                    Ok(()) => cocaine_log!(log, Severity::Info, "service `{}` has been reconnected", service.name()),
+                                    Err(err) => {
+                                        // Okay, we've tried our best. Insert the service anyway,
+                                        // because internally it will try to establish connection
+                                        // before each invocation attempt.
+                                        cocaine_log!(log, Severity::Warn, "failed to reconnect `{}` service: {}", service.name(), err);
+                                    }
                                 }
 
                                 tx.send(Event::ServiceConnect(service)).unwrap();
@@ -126,6 +134,7 @@ impl ServicePool {
 /// - RG notifiers.
 pub struct PoolTask {
     handle: Handle,
+    log: Logger,
     tx: mpsc::UnboundedSender<Event>,
     rx: mpsc::UnboundedReceiver<Event>,
 
@@ -133,9 +142,10 @@ pub struct PoolTask {
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(handle: Handle, log: Logger, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             handle: handle,
+            log: log,
             tx: tx,
             rx: rx,
             pool: HashMap::new(),
@@ -144,10 +154,11 @@ impl PoolTask {
 
     fn select_service(&mut self, name: String, handle: &Handle) -> &Service {
         let tx = self.tx.clone();
+        let log = self.log.clone();
         let mut pool = {
             let name = name.clone();
             self.pool.entry(name.clone())
-                .or_insert_with(|| ServicePool::new(name, 10, handle, tx))
+                .or_insert_with(|| ServicePool::new(name, 10, handle, tx, log))
         };
 
         let now = SystemTime::now();
@@ -177,7 +188,6 @@ impl Future for PoolTask {
                             handle.spawn(func.call_box((service,)));
                         }
                         Event::ServiceConnect(service) => {
-                            println!("got `ServiceConnect` event for `{}`", service.name());
                             match self.pool.get_mut(service.name()) {
                                 Some(pool) => {
                                     pool.connecting.fetch_sub(1, Ordering::Relaxed);

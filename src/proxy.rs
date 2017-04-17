@@ -93,8 +93,8 @@ impl ServiceFactory for ProxyServiceFactory {
     type Error    = hyper::Error;
 
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
-        self.metrics.connections.accepted.add(1);
         self.metrics.connections.active.add(1);
+        self.metrics.connections.accepted.add(1);
         cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr.unwrap());
 
         let service = ProxyService {
@@ -126,7 +126,7 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
             .expect("number of event channels must be exactly the same as the number of threads");
 
         // This will stop after all associated connections are closed.
-        handle.spawn(PoolTask::new(handle.clone(), tx, rx));
+        handle.spawn(PoolTask::new(handle.clone(), self.log.clone(), tx, rx));
         ProxyServiceFactory {
             log: self.log.clone(),
             metrics: self.metrics.clone(),
