@@ -58,14 +58,14 @@ impl Route for AppRoute {
                             body: None,
                             response: Some(Response::new()),
                         })
-                            .and_then(|tx| {
-                                // TODO: Proper arguments.
-                                let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
-                                tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
-                                tx.send(2, &[0; 0]);
-                                Ok(())
-                            })
-                            .then(|_| Ok(()));
+                        .and_then(|tx| {
+                            // TODO: Proper arguments.
+                            let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
+                            tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
+                            tx.send(2, &[0; 0]);
+                            Ok(())
+                        })
+                        .then(|_| Ok(()));
 
                         future.boxed()
                     },
