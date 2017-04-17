@@ -3,6 +3,7 @@ use futures::Future;
 use hyper;
 use hyper::server::{Response, Request};
 
+pub mod app;
 pub mod performance;
 
 pub trait Route: Send + Sync {
