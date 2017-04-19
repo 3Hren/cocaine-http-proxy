@@ -2,11 +2,13 @@
 
 use std::cell::RefCell;
 use std::io::{self};
-use std::net::SocketAddr;
+use std::mem;
+use std::net::{self, SocketAddr};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 
 use net2::TcpBuilder;
 use net2::unix::UnixTcpBuilderExt;
@@ -105,14 +107,14 @@ impl Future for WaitUntilZero {
 }
 
 struct HttpService<T> {
-    rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>,
+    rx: mpsc::UnboundedReceiver<(net::TcpStream, SocketAddr)>,
     handle: Handle,
     protocol: Http,
     factory: T,
 }
 
 impl<T> HttpService<T> {
-    fn new(rx: mpsc::UnboundedReceiver<(TcpStream, SocketAddr)>, handle: Handle, factory: T) -> Self {
+    fn new(rx: mpsc::UnboundedReceiver<(net::TcpStream, SocketAddr)>, handle: Handle, factory: T) -> Self {
         Self {
             rx: rx,
             handle: handle,
@@ -132,6 +134,7 @@ impl<T: ServiceFactory<Request=Request, Response=Response, Error=hyper::Error>> 
         loop {
             match self.rx.poll() {
                 Ok(Async::Ready(Some((sock, addr)))) => {
+                    let sock = TcpStream::from_stream(sock, &self.handle)?;
                     let service = self.factory.create_service(Some(addr))?;
                     self.protocol.bind_connection(&self.handle, sock, addr, service);
                 }
@@ -193,7 +196,7 @@ fn bind(addr: SocketAddr, backlog: i32, handle: &Handle) -> Result<TcpListener, 
 #[derive(Debug)]
 pub struct ServerGroup {
     core: Core,
-    servers: Vec<(TcpListener, Vec<mpsc::UnboundedSender<(TcpStream, SocketAddr)>>)>,
+    servers: Vec<(TcpListener, Vec<mpsc::UnboundedSender<(net::TcpStream, SocketAddr)>>)>,
     threads: Vec<JoinHandle<Result<(), io::Error>>>,
 }
 
@@ -282,7 +285,10 @@ impl ServerGroup {
         let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
             let mut iter = dispatchers.into_iter().cycle();
             listener.incoming().for_each(move |(sock, addr)| {
-                sock.set_nodelay(true)?;
+                let fd = sock.as_raw_fd();
+                mem::forget(sock);
+                let dup = unsafe { net::TcpStream::from_raw_fd(fd) };
+                let sock = dup.try_clone()?;
                 iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
                 Ok(())
             })
