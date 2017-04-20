@@ -10,16 +10,16 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 
-use net2::TcpBuilder;
-use net2::unix::UnixTcpBuilderExt;
-use num_cpus;
-
 use futures::{future, Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 
 use hyper;
 use hyper::server::{Http, Request, Response};
+
+use net2::TcpBuilder;
+use net2::unix::UnixTcpBuilderExt;
+use num_cpus;
 
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle, Timeout};
@@ -143,7 +143,6 @@ impl<T: ServiceFactory<Request=Request, Response=Response, Error=hyper::Error>> 
                 }
                 Ok(Async::Ready(None)) | Err(..) => {
                     // Listener is gone.
-                    println!("Listener is gone.");
                     return Ok(Async::Ready(()));
                 }
             }
@@ -299,10 +298,8 @@ impl ServerGroup {
 
         self.core.run(listen.select(cancel).map_err(|(err, ..)| err))?;
 
-        println!("Before join");
-
         for thread in self.threads {
-            thread.join().unwrap()?;
+            thread.join().expect("workers should not panic")?;
         }
 
         Ok(())
