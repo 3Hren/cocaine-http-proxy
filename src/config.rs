@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use serde::Serializer;
 use serde::de::{self, Deserialize, Deserializer};
+use serde_json;
 use serde_yaml;
 
 use cocaine::logging::Severity;
@@ -101,7 +102,8 @@ pub struct Config {
 
 impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, Box<Error>> {
-        let cfg = serde_yaml::from_reader(&File::open(path)?)?;
+//        let cfg = serde_yaml::from_reader(&File::open(path)?)?;
+        let cfg = serde_json::from_reader(&File::open(path)?)?;
 
         Config::sanitize(&cfg)?;
 
