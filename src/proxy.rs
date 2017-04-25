@@ -6,12 +6,16 @@
 //! - [x] enable application services.
 //! - [x] smart reconnection in the pool.
 //! - [ ] RG support for immediate updates.
+//! - [ ] fixed-size pool balancing.
+//! - [ ] pass pool settings from config.
 //! - [ ] request timeouts.
 //! - [ ] unicorn support for tracing.
 //! - [ ] unicorn support for timeouts.
 //! - [ ] retry policy for applications.
 //! - [ ] metrics: histograms.
 //! - [ ] plugin system.
+//! - [ ] JSON RPC.
+//! - [ ] MDS direct.
 
 use std::borrow::{Cow};
 use std::error;
@@ -34,6 +38,7 @@ use slog::DrainExt;
 
 use cocaine::{Builder, Error};
 use cocaine::logging::{Logger, Severity};
+use cocaine::service::Locator;
 
 use config::Config;
 use logging::{Loggers};
@@ -112,6 +117,7 @@ struct ProxyServiceFactoryFactory {
     tx: Mutex<IntoIter<mpsc::UnboundedSender<Event>>>,
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
     log: Logger,
+    locator_addrs: Vec<SocketAddr>,
     metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
@@ -125,8 +131,15 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
         let rx = self.rx.lock().unwrap().next()
             .expect("number of event channels must be exactly the same as the number of threads");
 
+        let service = Builder::new("locator")
+            .locator_addrs(self.locator_addrs.clone())
+            .build(handle);
+
         // This will stop after all associated connections are closed.
-        handle.spawn(PoolTask::new(handle.clone(), self.log.clone(), tx, rx));
+        let pool = PoolTask::new(handle.clone(), self.log.clone(), Locator::new(service), tx, rx);
+        pool.subscribe_rg_updates();
+
+        handle.spawn(pool);
         ProxyServiceFactory {
             log: self.log.clone(),
             metrics: self.metrics.clone(),
@@ -267,6 +280,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         tx: Mutex::new(txs.clone().into_iter()),
         rx: Mutex::new(rxs.into_iter()),
         log: log.common().clone(),
+        locator_addrs: locator_addrs,
         metrics: metrics.clone(),
         routes: routes,
     });

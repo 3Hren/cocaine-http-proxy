@@ -14,6 +14,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate serde_yaml;
+extern crate uuid;
 
 #[macro_use(o, slog_log, slog_info, slog_warn)]
 extern crate slog;

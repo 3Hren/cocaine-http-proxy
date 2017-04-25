@@ -285,7 +285,7 @@ impl ServerGroup {
             let mut iter = dispatchers.into_iter().cycle();
             listener.incoming().for_each(move |(sock, addr)| {
                 let fd = sock.as_raw_fd();
-                mem::forget(sock);
+                mem::forget(sock); // TODO: Check whether this is correct.
                 let dup = unsafe { net::TcpStream::from_raw_fd(fd) };
                 let sock = dup.try_clone()?;
                 iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();

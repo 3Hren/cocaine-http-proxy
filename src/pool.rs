@@ -9,9 +9,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use tokio_core::reactor::Handle;
+use uuid::Uuid;
 
 use cocaine::Service;
+use cocaine::dispatch::Streaming;
 use cocaine::logging::{Logger, Severity};
+use cocaine::service::Locator;
+use cocaine::service::locator::HashRing;
 
 // TODO: Should not be public.
 pub enum Event {
@@ -19,7 +23,9 @@ pub enum Event {
         name: String,
         func: Box<FnBox(&Service) -> Box<Future<Item=(), Error=()> + Send> + Send>,
     },
-    ServiceConnect(Service),
+    OnServiceConnect(Service),
+    OnRoutingUpdates(HashMap<String, HashRing>),
+    SubscribeRouting,
 }
 
 struct WatchedService {
@@ -81,7 +87,9 @@ impl ServicePool {
         if now.duration_since(self.last_traverse).unwrap() > Duration::new(5, 0) {
             self.last_traverse = now;
 
-            println!("reconnecting at most {}/{} services", self.connecting_limit - self.connecting.load(Ordering::Relaxed), self.services.len());
+            cocaine_log!(self.log, Severity::Debug, "reconnecting at most {}/{} services",
+                [self.connecting_limit - self.connecting.load(Ordering::Relaxed), self.services.len()]);
+
             while self.connecting.load(Ordering::Relaxed) < self.connecting_limit {
                 match self.services.pop_front() {
                     Some(service) => {
@@ -105,7 +113,7 @@ impl ServicePool {
                                     }
                                 }
 
-                                tx.send(Event::ServiceConnect(service)).unwrap();
+                                tx.send(Event::OnServiceConnect(service)).unwrap();
                                 Ok(())
                             }));
                         } else {
@@ -135,6 +143,8 @@ impl ServicePool {
 pub struct PoolTask {
     handle: Handle,
     log: Logger,
+    locator: Locator,
+
     tx: mpsc::UnboundedSender<Event>,
     rx: mpsc::UnboundedReceiver<Event>,
 
@@ -142,10 +152,11 @@ pub struct PoolTask {
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(handle: Handle, log: Logger, locator: Locator, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             handle: handle,
             log: log,
+            locator: locator,
             tx: tx,
             rx: rx,
             pool: HashMap::new(),
@@ -168,6 +179,48 @@ impl PoolTask {
 
         pool.next()
     }
+
+    pub fn subscribe_rg_updates(&self) {
+        let tx = self.tx.clone();
+        let log = self.log.clone();
+        let uuid = Uuid::new_v4().hyphenated().to_string();
+
+        let future = {
+            let tx_copy = self.tx.clone();
+            let uuid = uuid.clone();
+            self.locator.routing(&uuid).for_each(move |groups| {
+                match groups {
+                    Streaming::Write(groups) => {
+                        tx.send(Event::OnRoutingUpdates(groups)).expect("must live");
+                    }
+                    Streaming::Error(..) |
+                    Streaming::Close => {}
+                }
+
+                Ok(())
+            }).then(move |eos| {
+                match eos {
+                    Ok(()) => {
+                        cocaine_log!(log, Severity::Info, "locator has closed RG subscription", {
+                        uuid: uuid,
+                    });
+                    }
+                    Err(err) => {
+                        cocaine_log!(log, Severity::Warn, "failed to update RG: {}", [err], {
+                        uuid: uuid,
+                    });
+                    }
+                }
+                tx_copy.send(Event::SubscribeRouting).expect("must live");
+                Ok(())
+            })
+        };
+
+        self.handle.spawn(future);
+        cocaine_log!(self.log, Severity::Info, "subscribed for RG updates", {
+            uuid: uuid,
+        });
+    }
 }
 
 impl Future for PoolTask {
@@ -187,7 +240,7 @@ impl Future for PoolTask {
 
                             handle.spawn(func.call_box((service,)));
                         }
-                        Event::ServiceConnect(service) => {
+                        Event::OnServiceConnect(service) => {
                             match self.pool.get_mut(service.name()) {
                                 Some(pool) => {
                                     pool.connecting.fetch_sub(1, Ordering::Relaxed);
@@ -198,7 +251,17 @@ impl Future for PoolTask {
                                 }
                             }
                         }
-                        // TODO: RG updates.
+                        Event::OnRoutingUpdates(groups) => {
+                            cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
+
+                            for (group, ..) in groups {
+
+                            }
+                        }
+                        Event::SubscribeRouting => {
+                            println!("SubscribeRouting");
+                            // TODO: if now - last_subscription_time < 1 -> delay else subscribe.
+                        }
                         // TODO: Unicorn timeout updates.
                         // TODO: Unicorn tracing chance updates.
                     }

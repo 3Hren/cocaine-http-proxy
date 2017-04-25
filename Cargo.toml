@@ -16,6 +16,7 @@ rand = "0.3"
 time = "0.1"
 futures = "0.1"
 itertools = "0.5"
+uuid = { version = "0.4", features = ["v4"] }
 
 tokio-core = "0.1"
 tokio-proto = "0.1"
