@@ -60,8 +60,8 @@ impl Service for MonitorService {
     fn call(&self, req: Self::Request) -> Self::Future {
         let res = match (req.method(), req.path()) {
             (&Method::Get, "/ping") => Response::new().with_status(StatusCode::Ok),
-            (&Method::Get, "/config") => response_json(&self.config),
-            (&Method::Get, "/metrics") => response_json(&self.metrics),
+            (&Method::Get, "/config") => response_json(&*self.config),
+            (&Method::Get, "/metrics") => response_json(&*self.metrics),
             (..) => Response::new().with_status(StatusCode::NotFound),
         };
 

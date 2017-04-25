@@ -16,8 +16,8 @@ fn serialize_into_str<S>(severity: &Severity, se: S) -> Result<S::Ok, S::Error>
     se.serialize_str(&format!("{}", severity))
 }
 
-fn deserialize_from_str<D>(de: D) -> Result<Severity, D::Error>
-    where D: Deserializer
+fn deserialize_from_str<'de, D>(de: D) -> Result<Severity, D::Error>
+    where D: Deserializer<'de>
 {
     let s: String = Deserialize::deserialize(de)?;
     Severity::from_str(&s).map_err(de::Error::custom)
