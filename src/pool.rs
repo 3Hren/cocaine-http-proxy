@@ -4,8 +4,6 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::iter;
 use std::time::{Duration, SystemTime};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
@@ -54,7 +52,7 @@ struct ServicePool {
     handle: Handle,
     last_traverse: SystemTime,
 
-    connecting: Arc<AtomicUsize>,
+    connecting: usize,
     connecting_limit: usize,
     services: VecDeque<WatchedService>,
     tx: mpsc::UnboundedSender<Event>,
@@ -72,7 +70,7 @@ impl ServicePool {
             lifetime: Duration::new(5, 0),
             handle: handle.clone(),
             last_traverse: now,
-            connecting: Arc::new(AtomicUsize::new(0)),
+            connecting: 0,
             connecting_limit: cmp::max(1, limit / 2),
             services: iter::repeat(name)
                 .take(limit)
@@ -98,14 +96,14 @@ impl ServicePool {
             self.last_traverse = now;
 
             cocaine_log!(self.log, Severity::Debug, "reconnecting at most {}/{} services",
-                [self.connecting_limit - self.connecting.load(Ordering::Relaxed), self.services.len()]);
+                [self.connecting_limit - self.connecting, self.services.len()]);
 
-            while self.connecting.load(Ordering::Relaxed) < self.connecting_limit {
+            while self.connecting < self.connecting_limit {
                 match self.services.pop_front() {
                     Some(service) => {
                         if now.duration_since(service.created_at).unwrap() > self.lifetime {
                             cocaine_log!(self.log, Severity::Info, "reconnecting `{}` service", self.name);
-                            self.connecting.fetch_add(1, Ordering::Relaxed);
+                            self.connecting += 1;
 
                             let service = Service::new(self.name.clone(), &self.handle);
                             let future = service.connect();
@@ -293,7 +291,7 @@ impl PoolTask {
         };
 
         let now = SystemTime::now();
-        while pool.services.len() + pool.connecting.load(Ordering::Relaxed) < 10 {
+        while pool.services.len() + pool.connecting < 10 {
             pool.services.push_back(WatchedService::new(Service::new(name.clone(), handle), now))
         }
 
@@ -321,7 +319,7 @@ impl Future for PoolTask {
                         Event::OnServiceConnect(service) => {
                             match self.pool.get_mut(service.name()) {
                                 Some(pool) => {
-                                    pool.connecting.fetch_sub(1, Ordering::Relaxed);
+                                    pool.connecting -= 1;
                                     pool.push(service);
                                 }
                                 None => {
@@ -335,6 +333,7 @@ impl Future for PoolTask {
                             for (group, ..) in groups {
                                 if self.pool.contains_key(&group) {
                                     // TODO: For x in range(limit) connect -> then -> OnServiceConnect + rebalance.
+                                    cocaine_log!(self.log, Severity::Info, "updated `{}` pool", group);
                                 }
                             }
                         }
