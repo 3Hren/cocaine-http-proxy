@@ -1,6 +1,7 @@
 use std::boxed::FnBox;
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::iter;
 use std::time::{Duration, SystemTime};
 use std::sync::Arc;
@@ -8,10 +9,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
-use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Handle, Timeout};
 use uuid::Uuid;
 
-use cocaine::Service;
+use cocaine::{Error, Service};
 use cocaine::dispatch::Streaming;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
@@ -25,7 +26,6 @@ pub enum Event {
     },
     OnServiceConnect(Service),
     OnRoutingUpdates(HashMap<String, HashRing>),
-    SubscribeRouting,
 }
 
 struct WatchedService {
@@ -48,6 +48,7 @@ struct ServicePool {
     /// Next service.
     counter: usize,
     name: String,
+    limit: usize,
     /// Maximum service age.
     lifetime: Duration,
     handle: Handle,
@@ -67,6 +68,7 @@ impl ServicePool {
             log: log,
             counter: 0,
             name: name.clone(),
+            limit: limit,
             lifetime: Duration::new(5, 0),
             handle: handle.clone(),
             last_traverse: now,
@@ -78,6 +80,14 @@ impl ServicePool {
                 .collect(),
             tx: tx
         }
+    }
+
+    fn push(&mut self, service: Service) {
+        while self.services.len() >= self.limit {
+            self.services.pop_front();
+        }
+
+        self.services.push_back(WatchedService::new(service, SystemTime::now()));
     }
 
     fn next(&mut self) -> &Service {
@@ -132,6 +142,118 @@ impl ServicePool {
     }
 }
 
+enum RoutingState<T> {
+    Fetch((String, T)),
+    Retry(Timeout),
+}
+
+pub struct RoutingGroupsUpdateTask<T> {
+    handle: Handle,
+    locator: Locator,
+    txs: Vec<mpsc::UnboundedSender<Event>>,
+    log: Logger,
+    /// Current state.
+    state: Option<RoutingState<T>>,
+    /// Number of unsuccessful routing table fetching attempts.
+    attempts: u32,
+    /// Maximum timeout value. Actual timeout is calculated using `1 << attempts` formula, but is
+    /// truncated to this value if oversaturated.
+    timeout_limit: Duration,
+}
+
+impl RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>>, Error=Error>>> {
+    pub fn new(handle: Handle, locator: Locator, txs: Vec<mpsc::UnboundedSender<Event>>, log: Logger) -> Self {
+        let uuid = Uuid::new_v4().hyphenated().to_string();
+        let stream = locator.routing(&uuid);
+
+        Self {
+            handle: handle,
+            locator: locator,
+            txs: txs,
+            log: log,
+            state: Some(RoutingState::Fetch((uuid, stream.boxed()))),
+            attempts: 0,
+            timeout_limit: Duration::new(32, 0),
+        }
+    }
+
+    fn next_timeout(&self) -> Duration {
+        // Hope that 2 ** 18 seconds, which is ~3 days, fits everyone needs.
+        let exp = cmp::min(self.attempts, 18);
+        let duration = Duration::new(2u64.pow(exp), 0);
+
+        cmp::min(duration, self.timeout_limit)
+    }
+}
+
+impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>>, Error=Error>>> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.state.take().expect("state must be valid") {
+            RoutingState::Fetch((uuid, mut stream)) => {
+                loop {
+                    match stream.poll() {
+                        Ok(Async::Ready(Some(Streaming::Write(groups)))) => {
+                            self.attempts = 0;
+
+                            for tx in &self.txs {
+                                tx.send(Event::OnRoutingUpdates(groups.clone()))
+                                    .expect("channel is bound to itself and lives forever");
+                            }
+                        }
+                        Ok(Async::Ready(Some(Streaming::Error(err)))) => {
+                            // TODO: Rework when futures 0.2 comes.
+                            // Since at 0.1 streams are not terminated with an error we must inject
+                            // our streaming protocol into a separate level. Squash it when futures
+                            // 0.2 comes.
+                            cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", [err], {
+                                uuid: uuid,
+                            });
+                        }
+                        Ok(Async::Ready(Some(Streaming::Close))) => {
+                            cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription", {
+                                uuid: uuid,
+                            });
+                        }
+                        Ok(Async::NotReady) => {
+                            break;
+                        }
+                        Ok(Async::Ready(None)) | Err(..) => {
+                            let timeout = self.next_timeout();
+                            cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", [timeout.as_secs()]);
+
+                            self.state = Some(RoutingState::Retry(Timeout::new(timeout, &self.handle)?));
+                            self.attempts += 1;
+                            return self.poll();
+                        }
+                    }
+                }
+                self.state = Some(RoutingState::Fetch((uuid, stream)));
+            }
+            RoutingState::Retry(mut timeout) => {
+                match timeout.poll() {
+                    Ok(Async::Ready(())) => {
+                        cocaine_log!(self.log, Severity::Debug, "timed out, trying to subscribe routing ...");
+
+                        let uuid = Uuid::new_v4().hyphenated().to_string();
+                        let stream = self.locator.routing(&uuid);
+                        self.state = Some(RoutingState::Fetch((uuid, stream.boxed())));
+                        return self.poll();
+                    }
+                    Ok(Async::NotReady) => {
+                        self.state = Some(RoutingState::Retry(timeout));
+                    }
+                    Err(..) => unreachable!(),
+                }
+            }
+        }
+
+        Ok(Async::NotReady)
+    }
+}
+
 ///
 /// # Note
 ///
@@ -143,7 +265,6 @@ impl ServicePool {
 pub struct PoolTask {
     handle: Handle,
     log: Logger,
-    locator: Locator,
 
     tx: mpsc::UnboundedSender<Event>,
     rx: mpsc::UnboundedReceiver<Event>,
@@ -152,11 +273,10 @@ pub struct PoolTask {
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, locator: Locator, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(handle: Handle, log: Logger, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
         Self {
             handle: handle,
             log: log,
-            locator: locator,
             tx: tx,
             rx: rx,
             pool: HashMap::new(),
@@ -178,48 +298,6 @@ impl PoolTask {
         }
 
         pool.next()
-    }
-
-    pub fn subscribe_rg_updates(&self) {
-        let tx = self.tx.clone();
-        let log = self.log.clone();
-        let uuid = Uuid::new_v4().hyphenated().to_string();
-
-        let future = {
-            let tx_copy = self.tx.clone();
-            let uuid = uuid.clone();
-            self.locator.routing(&uuid).for_each(move |groups| {
-                match groups {
-                    Streaming::Write(groups) => {
-                        tx.send(Event::OnRoutingUpdates(groups)).expect("must live");
-                    }
-                    Streaming::Error(..) |
-                    Streaming::Close => {}
-                }
-
-                Ok(())
-            }).then(move |eos| {
-                match eos {
-                    Ok(()) => {
-                        cocaine_log!(log, Severity::Info, "locator has closed RG subscription", {
-                        uuid: uuid,
-                    });
-                    }
-                    Err(err) => {
-                        cocaine_log!(log, Severity::Warn, "failed to update RG: {}", [err], {
-                        uuid: uuid,
-                    });
-                    }
-                }
-                tx_copy.send(Event::SubscribeRouting).expect("must live");
-                Ok(())
-            })
-        };
-
-        self.handle.spawn(future);
-        cocaine_log!(self.log, Severity::Info, "subscribed for RG updates", {
-            uuid: uuid,
-        });
     }
 }
 
@@ -244,7 +322,7 @@ impl Future for PoolTask {
                             match self.pool.get_mut(service.name()) {
                                 Some(pool) => {
                                     pool.connecting.fetch_sub(1, Ordering::Relaxed);
-                                    pool.services.push_back(WatchedService::new(service, SystemTime::now()));
+                                    pool.push(service);
                                 }
                                 None => {
                                     println!("dropping service `{}` to unknown pool", service.name());
@@ -255,12 +333,10 @@ impl Future for PoolTask {
                             cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
 
                             for (group, ..) in groups {
-
+                                if self.pool.contains_key(&group) {
+                                    // TODO: For x in range(limit) connect -> then -> OnServiceConnect + rebalance.
+                                }
                             }
-                        }
-                        Event::SubscribeRouting => {
-                            println!("SubscribeRouting");
-                            // TODO: if now - last_subscription_time < 1 -> delay else subscribe.
                         }
                         // TODO: Unicorn timeout updates.
                         // TODO: Unicorn tracing chance updates.

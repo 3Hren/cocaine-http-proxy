@@ -9,6 +9,7 @@
 //! - [ ] fixed-size pool balancing.
 //! - [ ] pass pool settings from config.
 //! - [ ] request timeouts.
+//! - [ ] headers in the framework.
 //! - [ ] unicorn support for tracing.
 //! - [ ] unicorn support for timeouts.
 //! - [ ] retry policy for applications.
@@ -16,12 +17,14 @@
 //! - [ ] plugin system.
 //! - [ ] JSON RPC.
 //! - [ ] MDS direct.
+//! - [ ] Streaming logging through HTTP.
 
-use std::borrow::{Cow};
+use std::borrow::Cow;
 use std::error;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::vec::IntoIter;
 
 use futures::{future, Future};
@@ -42,7 +45,7 @@ use cocaine::service::Locator;
 
 use config::Config;
 use logging::{Loggers};
-use pool::{Event, PoolTask};
+use pool::{Event, PoolTask, RoutingGroupsUpdateTask};
 use route::Route;
 use route::app::AppRoute;
 use route::performance::PerformanceRoute;
@@ -117,7 +120,6 @@ struct ProxyServiceFactoryFactory {
     tx: Mutex<IntoIter<mpsc::UnboundedSender<Event>>>,
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
     log: Logger,
-    locator_addrs: Vec<SocketAddr>,
     metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
 }
@@ -131,13 +133,8 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
         let rx = self.rx.lock().unwrap().next()
             .expect("number of event channels must be exactly the same as the number of threads");
 
-        let service = Builder::new("locator")
-            .locator_addrs(self.locator_addrs.clone())
-            .build(handle);
-
         // This will stop after all associated connections are closed.
-        let pool = PoolTask::new(handle.clone(), self.log.clone(), Locator::new(service), tx, rx);
-        pool.subscribe_rg_updates();
+        let pool = PoolTask::new(handle.clone(), self.log.clone(), tx, rx);
 
         handle.spawn(pool);
         ProxyServiceFactory {
@@ -280,10 +277,22 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         tx: Mutex::new(txs.clone().into_iter()),
         rx: Mutex::new(rxs.into_iter()),
         log: log.common().clone(),
-        locator_addrs: locator_addrs,
         metrics: metrics.clone(),
         routes: routes,
     });
+
+    let thread: JoinHandle<Result<(), io::Error>> = {
+        let log = log.common().clone();
+        thread::Builder::new().name("periodic".into()).spawn(move || {
+            let mut core = Core::new()?;
+            let locator = Builder::new("locator")
+                .locator_addrs(locator_addrs)
+                .build(&core.handle());
+
+            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), txs, log);
+            core.run(future)
+        })?
+    };
 
     let proxy = ServerBuilder::new(config.network().addr())
         .backlog(config.network().backlog())
@@ -296,6 +305,8 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         .expose(proxy, factory)?
         .expose(monitoring, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
         .run()?;
+
+    thread.join().unwrap()?;
 
     Ok(())
 }
