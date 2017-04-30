@@ -5,7 +5,7 @@
 //! - [x] basic metrics: counters, rates.
 //! - [x] enable application services.
 //! - [x] smart reconnection in the pool.
-//! - [ ] RG support for immediate updates.
+//! - [x] RG support for immediate updates.
 //! - [ ] fixed-size pool balancing.
 //! - [ ] pass pool settings from config.
 //! - [ ] request timeouts.
@@ -43,7 +43,7 @@ use cocaine::{Builder, Error};
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 
-use config::Config;
+use config::{Config, PoolConfig};
 use logging::{Loggers};
 use pool::{Event, PoolTask, RoutingGroupsUpdateTask};
 use route::Route;
@@ -122,6 +122,7 @@ struct ProxyServiceFactoryFactory {
     log: Logger,
     metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
+    cfg: PoolConfig,
 }
 
 impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
@@ -134,7 +135,7 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
             .expect("number of event channels must be exactly the same as the number of threads");
 
         // This will stop after all associated connections are closed.
-        let pool = PoolTask::new(handle.clone(), self.log.clone(), tx, rx);
+        let pool = PoolTask::new(handle.clone(), self.log.clone(), tx, rx, self.cfg.clone());
 
         handle.spawn(pool);
         ProxyServiceFactory {
@@ -279,6 +280,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         log: log.common().clone(),
         metrics: metrics.clone(),
         routes: routes,
+        cfg: config.pool().clone(),
     });
 
     let thread: JoinHandle<Result<(), io::Error>> = {

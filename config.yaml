@@ -42,9 +42,21 @@ logging:
     source: proxy/access
     severity: warn
 
-## Default pool size for applications.
-#pool: 10
-## Fine-grained application settings.
-#app:
-#  echo:
-#    pool: 4
+# Service pool settings.
+pool:
+  # Default pool limit for services.
+  limit: 5
+  # Default service life span in seconds after which it will be a candidate
+  # for reconnection.
+  lifespan: 60
+  # Fraction of a pool that can be in reconnection state simultaneously. Must
+  # be a float value between [0; 1]. A value of 0 means that the reconnection
+  # mechanism is disabled.
+  # For example we have a pool of 10 and the ratio of 0.31,
+  # then 10 * 0.31 = 3.1 -> 4 services can be reconnected simultaneously.
+  reconnection_ratio: 0.4
+  # Fine-grained settings. These are the same as above, but applies only for
+  # specified services.
+  services:
+    echo:
+      limit: 4

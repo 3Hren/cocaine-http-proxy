@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
@@ -90,6 +91,27 @@ impl MonitoringConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct ServicePoolConfig {
+    limit: Option<usize>,
+    lifespan: Option<u32>,
+    reconnection_ratio: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PoolConfig {
+    limit: usize,
+    lifespan: u32,
+    reconnection_ratio: f64,
+    services: HashMap<String, ServicePoolConfig>,
+}
+
+impl PoolConfig {
+    pub fn limit_for(&self, name: &str) -> usize {
+        self.services.get(name).and_then(|cfg| cfg.limit).unwrap_or(self.limit)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     network: NetworkConfig,
@@ -97,6 +119,7 @@ pub struct Config {
     locators: Vec<(IpAddr, u16)>,
     logging: LoggingConfig,
     monitoring: MonitoringConfig,
+    pool: PoolConfig,
 }
 
 impl Config {
@@ -134,5 +157,9 @@ impl Config {
 
     pub fn monitoring(&self) -> &MonitoringConfig {
         &self.monitoring
+    }
+
+    pub fn pool(&self) -> &PoolConfig {
+        &self.pool
     }
 }

@@ -6,7 +6,7 @@ use std::iter;
 use std::time::{Duration, SystemTime};
 
 use futures::{Async, Future, Poll, Stream};
-use futures::sync::mpsc;
+use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_core::reactor::{Handle, Timeout};
 use uuid::Uuid;
 
@@ -15,6 +15,8 @@ use cocaine::dispatch::Streaming;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
+
+use config::PoolConfig;
 
 // TODO: Should not be public.
 pub enum Event {
@@ -48,18 +50,18 @@ struct ServicePool {
     name: String,
     limit: usize,
     /// Maximum service age.
-    lifetime: Duration,
+    lifespan: Duration,
     handle: Handle,
     last_traverse: SystemTime,
 
     connecting: usize,
     connecting_limit: usize,
     services: VecDeque<WatchedService>,
-    tx: mpsc::UnboundedSender<Event>,
+    tx: UnboundedSender<Event>,
 }
 
 impl ServicePool {
-    fn new(name: String, limit: usize, handle: &Handle, tx: mpsc::UnboundedSender<Event>, log: Logger) -> Self {
+    fn new(name: String, limit: usize, handle: &Handle, tx: UnboundedSender<Event>, log: Logger) -> Self {
         let now = SystemTime::now();
 
         Self {
@@ -67,7 +69,7 @@ impl ServicePool {
             counter: 0,
             name: name.clone(),
             limit: limit,
-            lifetime: Duration::new(5, 0),
+            lifespan: Duration::new(5, 0),
             handle: handle.clone(),
             last_traverse: now,
             connecting: 0,
@@ -88,6 +90,31 @@ impl ServicePool {
         self.services.push_back(WatchedService::new(service, SystemTime::now()));
     }
 
+    fn reconnect(&mut self) {
+        cocaine_log!(self.log, Severity::Info, "reconnecting `{}` service", self.name);
+        self.connecting += 1;
+
+        let service = Service::new(self.name.clone(), &self.handle);
+        let future = service.connect();
+
+        let tx = self.tx.clone();
+        let log = self.log.clone();
+        self.handle.spawn(future.then(move |res| {
+            match res {
+                Ok(()) => cocaine_log!(log, Severity::Info, "service `{}` has been reconnected", service.name()),
+                Err(err) => {
+                    // Okay, we've tried our best. Insert the service anyway,
+                    // because internally it will try to establish connection
+                    // before each invocation attempt.
+                    cocaine_log!(log, Severity::Warn, "failed to reconnect `{}` service: {}", service.name(), err);
+                }
+            }
+
+            tx.send(Event::OnServiceConnect(service)).unwrap();
+            Ok(())
+        }));
+    }
+
     fn next(&mut self) -> &Service {
         let now = SystemTime::now();
 
@@ -101,29 +128,8 @@ impl ServicePool {
             while self.connecting < self.connecting_limit {
                 match self.services.pop_front() {
                     Some(service) => {
-                        if now.duration_since(service.created_at).unwrap() > self.lifetime {
-                            cocaine_log!(self.log, Severity::Info, "reconnecting `{}` service", self.name);
-                            self.connecting += 1;
-
-                            let service = Service::new(self.name.clone(), &self.handle);
-                            let future = service.connect();
-
-                            let tx = self.tx.clone();
-                            let log = self.log.clone();
-                            self.handle.spawn(future.then(move |res| {
-                                match res {
-                                    Ok(()) => cocaine_log!(log, Severity::Info, "service `{}` has been reconnected", service.name()),
-                                    Err(err) => {
-                                        // Okay, we've tried our best. Insert the service anyway,
-                                        // because internally it will try to establish connection
-                                        // before each invocation attempt.
-                                        cocaine_log!(log, Severity::Warn, "failed to reconnect `{}` service: {}", service.name(), err);
-                                    }
-                                }
-
-                                tx.send(Event::OnServiceConnect(service)).unwrap();
-                                Ok(())
-                            }));
+                        if now.duration_since(service.created_at).unwrap() > self.lifespan {
+                            self.reconnect();
                         } else {
                             self.services.push_front(service);
                             break;
@@ -148,19 +154,19 @@ enum RoutingState<T> {
 pub struct RoutingGroupsUpdateTask<T> {
     handle: Handle,
     locator: Locator,
-    txs: Vec<mpsc::UnboundedSender<Event>>,
+    txs: Vec<UnboundedSender<Event>>,
     log: Logger,
     /// Current state.
     state: Option<RoutingState<T>>,
     /// Number of unsuccessful routing table fetching attempts.
     attempts: u32,
-    /// Maximum timeout value. Actual timeout is calculated using `1 << attempts` formula, but is
+    /// Maximum timeout value. Actual timeout is calculated using `2 ** attempts` formula, but is
     /// truncated to this value if oversaturated.
     timeout_limit: Duration,
 }
 
 impl RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>>, Error=Error>>> {
-    pub fn new(handle: Handle, locator: Locator, txs: Vec<mpsc::UnboundedSender<Event>>, log: Logger) -> Self {
+    pub fn new(handle: Handle, locator: Locator, txs: Vec<UnboundedSender<Event>>, log: Logger) -> Self {
         let uuid = Uuid::new_v4().hyphenated().to_string();
         let stream = locator.routing(&uuid);
 
@@ -264,19 +270,21 @@ pub struct PoolTask {
     handle: Handle,
     log: Logger,
 
-    tx: mpsc::UnboundedSender<Event>,
-    rx: mpsc::UnboundedReceiver<Event>,
+    tx: UnboundedSender<Event>,
+    rx: UnboundedReceiver<Event>,
 
+    cfg: PoolConfig,
     pool: HashMap<String, ServicePool>,
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, tx: mpsc::UnboundedSender<Event>, rx: mpsc::UnboundedReceiver<Event>) -> Self {
+    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: PoolConfig) -> Self {
         Self {
             handle: handle,
             log: log,
             tx: tx,
             rx: rx,
+            cfg: cfg,
             pool: HashMap::new(),
         }
     }
@@ -284,10 +292,12 @@ impl PoolTask {
     fn select_service(&mut self, name: String, handle: &Handle) -> &Service {
         let tx = self.tx.clone();
         let log = self.log.clone();
+        let limit = self.cfg.limit_for(&name);
+
         let mut pool = {
             let name = name.clone();
             self.pool.entry(name.clone())
-                .or_insert_with(|| ServicePool::new(name, 10, handle, tx, log))
+                .or_insert_with(|| ServicePool::new(name, limit, handle, tx, log))
         };
 
         let now = SystemTime::now();
@@ -331,8 +341,10 @@ impl Future for PoolTask {
                             cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
 
                             for (group, ..) in groups {
-                                if self.pool.contains_key(&group) {
-                                    // TODO: For x in range(limit) connect -> then -> OnServiceConnect + rebalance.
+                                if let Some(pool) = self.pool.get_mut(&group) {
+                                    for _ in 0..pool.limit {
+                                        pool.reconnect();
+                                    }
                                     cocaine_log!(self.log, Severity::Info, "updated `{}` pool", group);
                                 }
                             }
