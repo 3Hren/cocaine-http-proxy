@@ -36,7 +36,7 @@ logging:
   common:
     name: logging
     source: proxy/common
-    severity: info
+    severity: debug
   access:
     name: logging-access
     source: proxy/access
@@ -52,7 +52,7 @@ pool:
   # Fraction of a pool that can be in reconnection state simultaneously. Must
   # be a float value between [0; 1]. A value of 0 means that the reconnection
   # mechanism is disabled.
-  # For example we have a pool of 10 and the ratio of 0.31,
+  # For example we have a pool of 10 services and the ratio of 0.31,
   # then 10 * 0.31 = 3.1 -> 4 services can be reconnected simultaneously.
   reconnection_ratio: 0.4
   # Fine-grained settings. These are the same as above, but applies only for

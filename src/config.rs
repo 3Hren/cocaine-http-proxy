@@ -91,24 +91,60 @@ impl MonitoringConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct ServicePoolConfig {
+    limit: usize,
+    lifespan: u64,
+    reconnection_ratio: f64,
+}
+
+impl ServicePoolConfig {
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub fn lifespan(&self) -> u64 {
+        self.lifespan
+    }
+
+    pub fn reconnection_ratio(&self) -> f64 {
+        self.reconnection_ratio
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct DetailPoolConfig {
     limit: Option<usize>,
-    lifespan: Option<u32>,
+    lifespan: Option<u64>,
     reconnection_ratio: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PoolConfig {
     limit: usize,
-    lifespan: u32,
+    lifespan: u64,
     reconnection_ratio: f64,
-    services: HashMap<String, ServicePoolConfig>,
+    services: HashMap<String, DetailPoolConfig>,
 }
 
 impl PoolConfig {
-    pub fn limit_for(&self, name: &str) -> usize {
-        self.services.get(name).and_then(|cfg| cfg.limit).unwrap_or(self.limit)
+    pub fn config(&self, name: &str) -> ServicePoolConfig {
+        match self.services.get(name) {
+            Some(cfg) => {
+                ServicePoolConfig {
+                    limit: cfg.limit.unwrap_or(self.limit),
+                    lifespan: cfg.lifespan.unwrap_or(self.lifespan),
+                    reconnection_ratio: cfg.reconnection_ratio.unwrap_or(self.reconnection_ratio),
+                }
+            }
+            None => {
+                ServicePoolConfig {
+                    limit: self.limit,
+                    lifespan: self.lifespan,
+                    reconnection_ratio: self.reconnection_ratio,
+                }
+            }
+        }
     }
 }
 

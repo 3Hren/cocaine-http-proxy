@@ -6,18 +6,18 @@
 //! - [x] enable application services.
 //! - [x] smart reconnection in the pool.
 //! - [x] RG support for immediate updates.
-//! - [ ] fixed-size pool balancing.
-//! - [ ] pass pool settings from config.
-//! - [ ] request timeouts.
+//! - [x] pass pool settings from config.
+//! - [x] fixed-size pool balancing.
+//! - [x] unicorn support for tracing.
 //! - [ ] headers in the framework.
-//! - [ ] unicorn support for tracing.
-//! - [ ] unicorn support for timeouts.
+//! - [x] unicorn support for timeouts.
+//! - [ ] request timeouts.
 //! - [ ] retry policy for applications.
 //! - [ ] metrics: histograms.
-//! - [ ] plugin system.
 //! - [ ] JSON RPC.
 //! - [ ] MDS direct.
 //! - [ ] Streaming logging through HTTP.
+//! - [ ] plugin system.
 
 use std::borrow::Cow;
 use std::error;
@@ -41,11 +41,11 @@ use slog::DrainExt;
 
 use cocaine::{Builder, Error};
 use cocaine::logging::{Logger, Severity};
-use cocaine::service::Locator;
+use cocaine::service::{Locator, Unicorn};
 
 use config::{Config, PoolConfig};
 use logging::{Loggers};
-use pool::{Event, PoolTask, RoutingGroupsUpdateTask};
+use pool::{SubscribeTask, Event, PoolTask, RoutingGroupsUpdateTask};
 use route::Route;
 use route::app::AppRoute;
 use route::performance::PerformanceRoute;
@@ -288,11 +288,31 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         thread::Builder::new().name("periodic".into()).spawn(move || {
             let mut core = Core::new()?;
             let locator = Builder::new("locator")
+                .locator_addrs(locator_addrs.clone())
+                .build(&core.handle());
+            let unicorn = Builder::new("unicorn")
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
-            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), txs, log);
-            core.run(future)
+            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), txs.clone(), log.clone());
+            let tracing = {
+                let txs = txs.clone();
+
+                SubscribeTask::new(
+                    "/tracing".into(),
+                    Unicorn::new(unicorn),
+                    log.clone(),
+                    core.handle(),
+                    move |tracing| {
+                        for tx in &txs {
+                            tx.send(Event::OnTracingUpdates(tracing.clone())).unwrap();
+                        }
+                    }
+                )
+            };
+            core.run(future.join(tracing)).unwrap();
+
+            Ok(())
         })?
     };
 

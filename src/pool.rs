@@ -15,8 +15,9 @@ use cocaine::dispatch::Streaming;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
+use cocaine::service::unicorn::{Close, Unicorn, Version};
 
-use config::PoolConfig;
+use config::{PoolConfig, ServicePoolConfig};
 
 // TODO: Should not be public.
 pub enum Event {
@@ -26,6 +27,8 @@ pub enum Event {
     },
     OnServiceConnect(Service),
     OnRoutingUpdates(HashMap<String, HashRing>),
+    OnTracingUpdates(HashMap<String, f64>),
+    OnTimeoutUpdates(HashMap<String, f64>),
 }
 
 struct WatchedService {
@@ -61,24 +64,24 @@ struct ServicePool {
 }
 
 impl ServicePool {
-    fn new(name: String, limit: usize, handle: &Handle, tx: UnboundedSender<Event>, log: Logger) -> Self {
+    fn new(name: String, cfg: ServicePoolConfig, handle: &Handle, tx: UnboundedSender<Event>, log: Logger) -> Self {
         let now = SystemTime::now();
 
         Self {
             log: log,
             counter: 0,
             name: name.clone(),
-            limit: limit,
-            lifespan: Duration::new(5, 0),
+            limit: cfg.limit(),
+            lifespan: Duration::new(cfg.lifespan(), 0),
             handle: handle.clone(),
             last_traverse: now,
             connecting: 0,
-            connecting_limit: cmp::max(1, limit / 2),
+            connecting_limit: cmp::max(1, (cfg.limit() as f64 * cfg.reconnection_ratio()).ceil() as usize),
             services: iter::repeat(name)
-                .take(limit)
+                .take(cfg.limit())
                 .map(|name| WatchedService::new(Service::new(name.clone(), handle), now))
                 .collect(),
-            tx: tx
+            tx: tx,
         }
     }
 
@@ -103,9 +106,8 @@ impl ServicePool {
             match res {
                 Ok(()) => cocaine_log!(log, Severity::Info, "service `{}` has been reconnected", service.name()),
                 Err(err) => {
-                    // Okay, we've tried our best. Insert the service anyway,
-                    // because internally it will try to establish connection
-                    // before each invocation attempt.
+                    // Okay, we've tried our best. Insert the service anyway, because internally it
+                    // will try to establish connection before the next invocation attempt.
                     cocaine_log!(log, Severity::Warn, "failed to reconnect `{}` service: {}", service.name(), err);
                 }
             }
@@ -113,6 +115,12 @@ impl ServicePool {
             tx.send(Event::OnServiceConnect(service)).unwrap();
             Ok(())
         }));
+    }
+
+    fn reconnect_all(&mut self) {
+        for _ in 0..self.limit {
+            self.reconnect();
+        }
     }
 
     fn next(&mut self) -> &Service {
@@ -143,6 +151,120 @@ impl ServicePool {
         self.counter = (self.counter + 1) % self.services.len();
 
         &self.services[self.counter].service
+    }
+}
+
+///
+/// # Note
+///
+/// This task lives until all associated senders live:
+/// - HTTP handlers.
+/// - Timers.
+/// - Unicorn notifiers.
+/// - RG notifiers.
+pub struct PoolTask {
+    handle: Handle,
+    log: Logger,
+
+    tx: UnboundedSender<Event>,
+    rx: UnboundedReceiver<Event>,
+
+    cfg: PoolConfig,
+    pool: HashMap<String, ServicePool>,
+
+    tracing: HashMap<String, f64>,
+    timeouts: HashMap<String, f64>,
+}
+
+impl PoolTask {
+    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: PoolConfig) -> Self {
+        Self {
+            handle: handle,
+            log: log,
+            tx: tx,
+            rx: rx,
+            cfg: cfg,
+            pool: HashMap::new(),
+            tracing: HashMap::new(),
+            timeouts: HashMap::new(),
+        }
+    }
+
+    fn select_service(&mut self, name: String, handle: &Handle) -> &Service {
+        let tx = self.tx.clone();
+        let log = self.log.clone();
+        let cfg = self.cfg.config(&name);
+
+        let mut pool = {
+            let name = name.clone();
+            self.pool.entry(name.clone())
+                .or_insert_with(|| ServicePool::new(name, cfg, handle, tx, log))
+        };
+
+        let now = SystemTime::now();
+        while pool.services.len() + pool.connecting < 10 {
+            pool.services.push_back(WatchedService::new(Service::new(name.clone(), handle), now))
+        }
+
+        pool.next()
+    }
+}
+
+impl Future for PoolTask {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.rx.poll() {
+                Ok(Async::Ready(Some(event))) => {
+                    match event {
+                        Event::Service { name, func } => {
+                            // Select the next service that is not reconnecting right now.
+                            let handle = self.handle.clone();
+                            let ref service = self.select_service(name, &handle);
+
+                            handle.spawn(func.call_box((service,)));
+                        }
+                        Event::OnServiceConnect(service) => {
+                            match self.pool.get_mut(service.name()) {
+                                Some(pool) => {
+                                    pool.connecting -= 1;
+                                    pool.push(service);
+                                }
+                                None => {
+                                    println!("dropping service `{}` to unknown pool", service.name());
+                                }
+                            }
+                        }
+                        Event::OnRoutingUpdates(groups) => {
+                            for (group, ..) in groups {
+                                if let Some(pool) = self.pool.get_mut(&group) {
+                                    cocaine_log!(self.log, Severity::Info, "updated `{}` pool", group);
+                                    pool.reconnect_all();
+                                }
+                            }
+                        }
+                        Event::OnTracingUpdates(tracing) => {
+                            cocaine_log!(self.log, Severity::Info, "updated tracing map");
+                            self.tracing = tracing;
+                        }
+                        Event::OnTimeoutUpdates(timeouts) => {
+                            cocaine_log!(self.log, Severity::Info, "updated timeouts map");
+                            self.timeouts = timeouts;
+                        }
+                    }
+                }
+                Ok(Async::NotReady) => {
+                    break;
+                }
+                Ok(Async::Ready(None)) | Err(..) => {
+                    return Ok(Async::Ready(()));
+                }
+            }
+        }
+
+        Ok(Async::NotReady)
     }
 }
 
@@ -182,7 +304,7 @@ impl RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>
     }
 
     fn next_timeout(&self) -> Duration {
-        // Hope that 2 ** 18 seconds, which is ~3 days, fits everyone needs.
+        // Hope that 2**18 seconds, which is ~3 days, fits everyone needs.
         let exp = cmp::min(self.attempts, 18);
         let duration = Duration::new(2u64.pow(exp), 0);
 
@@ -202,6 +324,7 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String
                         Ok(Async::Ready(Some(Streaming::Write(groups)))) => {
                             self.attempts = 0;
 
+                            cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
                             for tx in &self.txs {
                                 tx.send(Event::OnRoutingUpdates(groups.clone()))
                                     .expect("channel is bound to itself and lives forever");
@@ -258,106 +381,138 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String
     }
 }
 
-///
-/// # Note
-///
-/// This task lives until all associated senders live:
-/// - HTTP handlers.
-/// - Timers.
-/// - Unicorn notifiers.
-/// - RG notifiers.
-pub struct PoolTask {
-    handle: Handle,
+type SubscribeStream = Box<Stream<Item=(HashMap<String, f64>, Version), Error=Error> + Send>;
+
+enum SubscribeState {
+    Start(Box<Future<Item=(Close, SubscribeStream), Error=Error>>),
+    Fetch(SubscribeStream),
+    Retry(Timeout),
+}
+
+pub struct SubscribeTask<F> {
+    /// Path subscribed on.
+    path: String,
+    /// Unicorn service.
+    unicorn: Unicorn,
+    /// Logger service.
     log: Logger,
-
-    tx: UnboundedSender<Event>,
-    rx: UnboundedReceiver<Event>,
-
-    cfg: PoolConfig,
-    pool: HashMap<String, ServicePool>,
+    /// I/O loop handle.
+    handle: Handle,
+    /// Current state.
+    state: Option<SubscribeState>,
+    /// Number of unsuccessful fetching attempts.
+    attempts: u32,
+    /// Maximum timeout value. Actual timeout is calculated using `2 ** attempts` formula, but is
+    /// truncated to this value if oversaturated.
+    timeout_limit: Duration,
+    /// Close handle to be able to notify the Unicorn that we no longer needed for updates.
+    close: Option<Close>,
+    callback: F,
 }
 
-impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: PoolConfig) -> Self {
+impl<F> SubscribeTask<F>
+    where F: Fn(HashMap<String, f64>)
+{
+    pub fn new(path: String, unicorn: Unicorn, log: Logger, handle: Handle, callback: F) -> Self {
+        let future = Box::new(unicorn.subscribe(path.clone()));
+
         Self {
-            handle: handle,
+            path: path,
+            unicorn: unicorn,
             log: log,
-            tx: tx,
-            rx: rx,
-            cfg: cfg,
-            pool: HashMap::new(),
+            handle: handle,
+            state: Some(SubscribeState::Start(future)),
+            attempts: 0,
+            timeout_limit: Duration::new(32, 0),
+            close: None,
+            callback: callback,
         }
     }
 
-    fn select_service(&mut self, name: String, handle: &Handle) -> &Service {
-        let tx = self.tx.clone();
-        let log = self.log.clone();
-        let limit = self.cfg.limit_for(&name);
+    fn next_timeout(&self) -> Duration {
+        // Hope that 2**18 seconds, which is ~3 days, fits everyone needs.
+        let exp = cmp::min(self.attempts, 18);
+        let duration = Duration::new(2u64.pow(exp), 0);
 
-        let mut pool = {
-            let name = name.clone();
-            self.pool.entry(name.clone())
-                .or_insert_with(|| ServicePool::new(name, limit, handle, tx, log))
-        };
+        cmp::min(duration, self.timeout_limit)
+    }
 
-        let now = SystemTime::now();
-        while pool.services.len() + pool.connecting < 10 {
-            pool.services.push_back(WatchedService::new(Service::new(name.clone(), handle), now))
-        }
+    fn retry_later(&mut self) -> Poll<(), io::Error> {
+        let timeout = self.next_timeout();
+        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", [timeout.as_secs()]);
 
-        pool.next()
+        self.state = Some(SubscribeState::Retry(Timeout::new(timeout, &self.handle)?));
+        self.attempts += 1;
+        return self.poll();
     }
 }
 
-impl Future for PoolTask {
+impl<F> Future for SubscribeTask<F>
+    where F: Fn(HashMap<String, f64>)
+{
     type Item = ();
-    type Error = ();
+    type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        loop {
-            match self.rx.poll() {
-                Ok(Async::Ready(Some(event))) => {
-                    match event {
-                        Event::Service { name, func } => {
-                            // Select the next service that is not reconnecting right now. No more
-                            // than N/2 services can be in reconnecting state concurrently.
-                            let handle = self.handle.clone();
-                            let ref service = self.select_service(name, &handle);
+        match self.state.take().unwrap() {
+            SubscribeState::Start(mut future) => {
+                match future.poll() {
+                    Ok(Async::Ready((close, stream))) => {
+                        self.close = Some(close);
+                        self.state = Some(SubscribeState::Fetch(Box::new(stream)));
 
-                            handle.spawn(func.call_box((service,)));
-                        }
-                        Event::OnServiceConnect(service) => {
-                            match self.pool.get_mut(service.name()) {
-                                Some(pool) => {
-                                    pool.connecting -= 1;
-                                    pool.push(service);
-                                }
-                                None => {
-                                    println!("dropping service `{}` to unknown pool", service.name());
-                                }
-                            }
-                        }
-                        Event::OnRoutingUpdates(groups) => {
-                            cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
-
-                            for (group, ..) in groups {
-                                if let Some(pool) = self.pool.get_mut(&group) {
-                                    for _ in 0..pool.limit {
-                                        pool.reconnect();
-                                    }
-                                    cocaine_log!(self.log, Severity::Info, "updated `{}` pool", group);
-                                }
-                            }
-                        }
-                        // TODO: Unicorn timeout updates.
-                        // TODO: Unicorn tracing chance updates.
+                        cocaine_log!(self.log, Severity::Debug, "ready to subscribe ...");
+                        return self.poll();
+                    }
+                    Ok(Async::NotReady) => {
+                        self.state = Some(SubscribeState::Start(future));
+                    }
+                    Err(err) => {
+                        cocaine_log!(self.log, Severity::Warn, "failed to subscribe: {}", [err], {
+                            path: self.path,
+                        });
+                        return self.retry_later();
                     }
                 }
-                Ok(Async::NotReady) => {
-                    break;
+            }
+            SubscribeState::Fetch(mut stream) => {
+                loop {
+                    match stream.poll() {
+                        Ok(Async::Ready(Some((value, version)))) => {
+                            self.attempts = 0;
+                            cocaine_log!(self.log, Severity::Debug, "received subscription update: {:?}, version {}", value, version);
+
+                            (self.callback)(value);
+                        }
+                        Ok(Async::NotReady) => {
+                            break;
+                        }
+                        Ok(Async::Ready(None)) => {
+                            return self.retry_later();
+                        }
+                        Err(err) => {
+                            cocaine_log!(self.log, Severity::Warn, "failed to fetch subscriptions: {}", [err], {
+                                path: self.path,
+                            });
+                            return self.retry_later();
+                        }
+                    }
                 }
-                Ok(Async::Ready(None)) | Err(..) => {
-                    return Ok(Async::Ready(()));
+                self.state = Some(SubscribeState::Fetch(stream));
+            }
+            SubscribeState::Retry(mut timeout) => {
+                match timeout.poll() {
+                    Ok(Async::Ready(())) => {
+                        cocaine_log!(self.log, Severity::Debug, "timed out, trying to subscribe ...");
+
+                        let future = self.unicorn.subscribe(self.path.clone()).boxed();
+                        self.state = Some(SubscribeState::Start(future));
+                        return self.poll();
+                    }
+                    Ok(Async::NotReady) => {
+                        self.state = Some(SubscribeState::Retry(timeout));
+                    }
+                    Err(..) => return self.retry_later(),
                 }
             }
         }
