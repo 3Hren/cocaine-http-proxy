@@ -14,7 +14,7 @@ use cocaine::logging::Severity;
 fn serialize_into_str<S>(severity: &Severity, se: S) -> Result<S::Ok, S::Error>
     where S: Serializer
 {
-    se.serialize_str(&format!("{}", severity))
+    se.serialize_str(&severity.to_string())
 }
 
 fn deserialize_from_str<'de, D>(de: D) -> Result<Severity, D::Error>
