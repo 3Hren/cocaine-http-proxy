@@ -41,7 +41,7 @@ impl Route for PerformanceRoute {
         let ev = Event::Service {
             name: "geobase".into(),
             func: box move |service: &Service| {
-                let future = service.call(0, &vec!["8.8.8.8"], SingleChunkReadDispatch { tx: tx })
+                let future = service.call(0, &vec!["8.8.8.8"], Vec::new(), SingleChunkReadDispatch { tx: tx })
                     .then(|tx| {
                         drop(tx);
                         Ok(())

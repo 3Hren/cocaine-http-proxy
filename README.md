@@ -1,33 +1,21 @@
-Le plan:
+# Cocaine HTTP proxy
 
-- [ ] Chose HTTP framework (mini-http or hyper).
-- [ ] Possibly squash threads with event loops.
-- [ ] Add monitoring port.
-- [ ] Add primitive metrics.
-- [ ] Implement dynamic service creation.
-- [ ] Periodic reconnection.
-- [ ] Rates per application.
-- [ ] Histograms for response times per application.
+An entry point to the Cocaine Cloud.
 
-```json
-{
-    "connections": {
-        "accepted": 100,
-        "progress": 32,
-    },
-    "requests": {
-        "xxx": 100000,
-        "2xx": 90000,
-        "3xx": 0,
-        "4xx": 2000,
-        "5xx": 8000,
-        "rate": [232.12, 230.21, 212.22],
-    },
-    "services": {
-        "echo": {
-            "pool": 10,
-            ""
-        }
-    }
-}
-```
+Cocaine HTTP proxy terminates HTTP traffic and transforms it into the binary protocol, allowing to communicate with Cloud services and applications.
+
+### Features
+
+- High performance and low memory footprint.
+
+  Backed with [Cocaine Framework Rust][cocaine-framework-rust] and [MessagePack][rmp] this HTTP proxy allows to communicate asynchronously with the Cloud applications and services.    
+
+- Cloud Logging.
+- Metrics
+- Tracing
+- JSON-RPC
+
+### Examples
+
+[rmp]: http://
+[cocaine-framework-rust]: http://

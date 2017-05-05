@@ -9,15 +9,19 @@
 //! - [x] pass pool settings from config.
 //! - [x] fixed-size pool balancing.
 //! - [x] unicorn support for tracing.
-//! - [ ] headers in the framework.
 //! - [x] unicorn support for timeouts.
+//! - [ ] headers in the framework.
+//! - [ ] tracing.
+//! - [ ] timeouts.
 //! - [ ] request timeouts.
+//! - [ ] clean code.
 //! - [ ] retry policy for applications.
 //! - [ ] metrics: histograms.
 //! - [ ] JSON RPC.
 //! - [ ] MDS direct.
 //! - [ ] Streaming logging through HTTP.
 //! - [ ] plugin system.
+//! - [ ] logging review.
 
 use std::borrow::Cow;
 use std::error;

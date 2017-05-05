@@ -61,7 +61,7 @@ impl AccessLogger {
         let elapsed = self.birth.elapsed();
         let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
 
-        cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", [elapsed_ms], {
+        cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", elapsed_ms; {
             request_id: trace,
             duration: elapsed_ms / 1000.0,
             method: self.method,

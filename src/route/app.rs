@@ -53,7 +53,7 @@ impl Route for AppRoute {
                 let ev = Event::Service {
                     name: service,
                     func: box move |service: &Service| {
-                        let future = service.call(0, &vec![event], AppReadDispatch {
+                        let future = service.call(0, &vec![event], Vec::new(), AppReadDispatch {
                             tx: tx,
                             body: None,
                             response: Some(Response::new()),

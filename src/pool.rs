@@ -11,7 +11,6 @@ use tokio_core::reactor::{Handle, Timeout};
 use uuid::Uuid;
 
 use cocaine::{Error, Service};
-use cocaine::dispatch::Streaming;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
@@ -131,7 +130,7 @@ impl ServicePool {
             self.last_traverse = now;
 
             cocaine_log!(self.log, Severity::Debug, "reconnecting at most {}/{} services",
-                [self.connecting_limit - self.connecting, self.services.len()]);
+                self.connecting_limit - self.connecting, self.services.len());
 
             while self.connecting < self.connecting_limit {
                 match self.services.pop_front() {
@@ -191,6 +190,7 @@ impl PoolTask {
     }
 
     fn select_service(&mut self, name: String, handle: &Handle) -> &Service {
+        // TODO: Do not clone if not needed.
         let tx = self.tx.clone();
         let log = self.log.clone();
         let cfg = self.cfg.config(&name);
@@ -287,7 +287,7 @@ pub struct RoutingGroupsUpdateTask<T> {
     timeout_limit: Duration,
 }
 
-impl RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>>, Error=Error>>> {
+impl RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
     pub fn new(handle: Handle, locator: Locator, txs: Vec<UnboundedSender<Event>>, log: Logger) -> Self {
         let uuid = Uuid::new_v4().hyphenated().to_string();
         let stream = locator.routing(&uuid);
@@ -310,9 +310,18 @@ impl RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>
 
         cmp::min(duration, self.timeout_limit)
     }
+
+    fn retry_later(&mut self) -> Poll<(), io::Error> {
+        let timeout = self.next_timeout();
+        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", timeout.as_secs());
+
+        self.state = Some(RoutingState::Retry(Timeout::new(timeout, &self.handle)?));
+        self.attempts += 1;
+        return self.poll();
+    }
 }
 
-impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String, HashRing>>, Error=Error>>> {
+impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
     type Item = ();
     type Error = io::Error;
 
@@ -321,7 +330,7 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String
             RoutingState::Fetch((uuid, mut stream)) => {
                 loop {
                     match stream.poll() {
-                        Ok(Async::Ready(Some(Streaming::Write(groups)))) => {
+                        Ok(Async::Ready(Some(groups))) => {
                             self.attempts = 0;
 
                             cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
@@ -330,30 +339,20 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=Streaming<HashMap<String
                                     .expect("channel is bound to itself and lives forever");
                             }
                         }
-                        Ok(Async::Ready(Some(Streaming::Error(err)))) => {
-                            // TODO: Rework when futures 0.2 comes.
-                            // Since at 0.1 streams are not terminated with an error we must inject
-                            // our streaming protocol into a separate level. Squash it when futures
-                            // 0.2 comes.
-                            cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", [err], {
-                                uuid: uuid,
-                            });
-                        }
-                        Ok(Async::Ready(Some(Streaming::Close))) => {
-                            cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription", {
-                                uuid: uuid,
-                            });
-                        }
                         Ok(Async::NotReady) => {
                             break;
                         }
-                        Ok(Async::Ready(None)) | Err(..) => {
-                            let timeout = self.next_timeout();
-                            cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", [timeout.as_secs()]);
-
-                            self.state = Some(RoutingState::Retry(Timeout::new(timeout, &self.handle)?));
-                            self.attempts += 1;
-                            return self.poll();
+                        Ok(Async::Ready(None)) => {
+                            cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription"; {
+                                uuid: uuid,
+                            });
+                            return self.retry_later();
+                        }
+                        Err(err) => {
+                            cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", err; {
+                                uuid: uuid,
+                            });
+                            return self.retry_later();
                         }
                     }
                 }
@@ -439,7 +438,7 @@ impl<F> SubscribeTask<F>
 
     fn retry_later(&mut self) -> Poll<(), io::Error> {
         let timeout = self.next_timeout();
-        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", [timeout.as_secs()]);
+        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", timeout.as_secs());
 
         self.state = Some(SubscribeState::Retry(Timeout::new(timeout, &self.handle)?));
         self.attempts += 1;
@@ -468,7 +467,7 @@ impl<F> Future for SubscribeTask<F>
                         self.state = Some(SubscribeState::Start(future));
                     }
                     Err(err) => {
-                        cocaine_log!(self.log, Severity::Warn, "failed to subscribe: {}", [err], {
+                        cocaine_log!(self.log, Severity::Warn, "failed to subscribe: {}", err; {
                             path: self.path,
                         });
                         return self.retry_later();
@@ -491,7 +490,7 @@ impl<F> Future for SubscribeTask<F>
                             return self.retry_later();
                         }
                         Err(err) => {
-                            cocaine_log!(self.log, Severity::Warn, "failed to fetch subscriptions: {}", [err], {
+                            cocaine_log!(self.log, Severity::Warn, "failed to fetch subscriptions: {}", err; {
                                 path: self.path,
                             });
                             return self.retry_later();
