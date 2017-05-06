@@ -1,3 +1,7 @@
+//! Contain a route that is used primarily for performance measuring.
+//!
+//! Currently all requests are transformed into a Geobase requests.
+
 use std::io::{self, ErrorKind};
 
 use rand;
