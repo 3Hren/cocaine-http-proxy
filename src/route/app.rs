@@ -162,7 +162,7 @@ impl Future for AppWithSafeRetry {
                     self.attempts += 1;
                     return self.poll();
                 } else {
-                    let body = "retry limit exceeded";
+                    let body = "Retry limit exceeded: queue is full";
                     let bytes = body.len() as u64;
                     let res = Response::new()
                         .with_status(StatusCode::InternalServerError)
