@@ -40,7 +40,7 @@ impl Route for PerformanceRoute {
 
         let ev = Event::Service {
             name: "geobase".into(),
-            func: box move |service: &Service| {
+            func: box move |service: &Service, _trace: bool| {
                 let future = service.call(0, &vec!["8.8.8.8"], Vec::new(), SingleChunkReadDispatch { tx: tx })
                     .then(|tx| {
                         drop(tx);
@@ -57,7 +57,7 @@ impl Route for PerformanceRoute {
         let log = AccessLogger::new(self.log.clone(), req);
         let future = rx.and_then(move |(mut res, bytes_sent)| {
             res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(x, res.status().into(), bytes_sent);
+            log.commit(x as u64, res.status().into(), bytes_sent);
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 

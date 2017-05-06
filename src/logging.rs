@@ -57,7 +57,7 @@ impl AccessLogger {
         }
     }
 
-    pub fn commit(self, trace: usize, status: u16, bytes_sent: u64) {
+    pub fn commit(self, trace: u64, status: u16, bytes_sent: u64) {
         let elapsed = self.birth.elapsed();
         let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
 

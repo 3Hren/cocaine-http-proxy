@@ -56,8 +56,9 @@ tracing:
   # If the header is absent a proxy will generate a random 64-bit value.
   header: X-Request-Id
   # Default deep-tracing probability.
-  # If triggered all logs during the tracing path will be written, no matter
-  # which filters are configured. Even debug logs.
+  # If triggered, a special `trace_bit` attribute will be set to all requests.
+  # Usually that means that all logs during the tracing path will be written,
+  # even debug logs.
   probability: 0.01
 
 # Request timeout in seconds after which it will be canceled and the server

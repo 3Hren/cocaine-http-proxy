@@ -11,7 +11,7 @@
 //! - [x] unicorn support for tracing.
 //! - [x] unicorn support for timeouts.
 //! - [x] headers in the framework.
-//! - [ ] tracing.
+//! - [x] tracing.
 //! - [ ] timeouts.
 //! - [ ] request timeouts.
 //! - [ ] clean code.
@@ -25,6 +25,7 @@
 
 #![feature(box_syntax, fnbox, integer_atomics)]
 
+extern crate byteorder;
 extern crate time;
 extern crate rand;
 extern crate log;
@@ -79,7 +80,6 @@ use cocaine::service::{Locator, Unicorn};
 
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
-use self::config::PoolConfig;
 use self::logging::{Loggers};
 use self::pool::{SubscribeTask, Event, PoolTask, RoutingGroupsUpdateTask};
 use self::route::Route;
@@ -165,7 +165,7 @@ struct ProxyServiceFactoryFactory {
     log: Logger,
     metrics: Arc<Metrics>,
     routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
-    cfg: PoolConfig,
+    cfg: Config,
 }
 
 impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
@@ -310,7 +310,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
 
     // let routes = make_routes(txs);
     let mut routes = Vec::new();
-    routes.push(Arc::new(AppRoute::new(txs.clone(), log.access().clone())) as Arc<_>);
+    routes.push(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())) as Arc<_>);
     routes.push(Arc::new(PerformanceRoute::new(txs.clone(), log.access().clone())) as Arc<_>);
 
     let factory = Arc::new(ProxyServiceFactoryFactory {
@@ -319,10 +319,11 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         log: log.common().clone(),
         metrics: metrics.clone(),
         routes: routes,
-        cfg: config.pool().clone(),
+        cfg: config.clone(),
     });
 
     let thread: JoinHandle<Result<(), io::Error>> = {
+        let cfg = config.tracing().clone();
         let log = log.common().clone();
         thread::Builder::new().name("periodic".into()).spawn(move || {
             let mut core = Core::new()?;
@@ -338,11 +339,12 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                 let txs = txs.clone();
 
                 SubscribeTask::new(
-                    "/tracing".into(),
+                    cfg.path().into(),
                     Unicorn::new(unicorn),
                     log.clone(),
                     core.handle(),
                     move |tracing| {
+                        cocaine_log!(log, Severity::Info, "updated tracing config with {} entries", tracing.len());
                         for tx in &txs {
                             tx.send(Event::OnTracingUpdates(tracing.clone())).unwrap();
                         }

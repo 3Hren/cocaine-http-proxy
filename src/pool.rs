@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use rand;
 use tokio_core::reactor::{Handle, Timeout};
 use uuid::Uuid;
 
@@ -16,13 +17,13 @@ use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
 use cocaine::service::unicorn::{Close, Unicorn, Version};
 
-use config::{PoolConfig, ServicePoolConfig};
+use config::{Config, PoolConfig, ServicePoolConfig};
 
 // TODO: Should not be public.
 pub enum Event {
     Service {
         name: String,
-        func: Box<FnBox(&Service) -> Box<Future<Item=(), Error=()> + Send> + Send>,
+        func: Box<FnBox(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send>,
     },
     OnServiceConnect(Service),
     OnRoutingUpdates(HashMap<String, HashRing>),
@@ -153,6 +154,32 @@ impl ServicePool {
     }
 }
 
+struct Tracing {
+    default: f64,
+    precise: HashMap<String, f64>,
+}
+
+impl Tracing {
+    fn new(default: f64) -> Self {
+        Self {
+            default: default,
+            precise: HashMap::new(),
+        }
+    }
+
+    fn reset(&mut self, precise: HashMap<String, f64>) {
+        self.precise = precise;
+    }
+
+    fn probability_for(&self, name: &String) -> f64 {
+        *self.precise.get(name).unwrap_or(&self.default)
+    }
+
+    fn calculate_trace_bit(&mut self, name: &String) -> bool {
+        rand::random::<f64>() <= self.probability_for(name)
+    }
+}
+
 ///
 /// # Note
 ///
@@ -171,20 +198,20 @@ pub struct PoolTask {
     cfg: PoolConfig,
     pool: HashMap<String, ServicePool>,
 
-    tracing: HashMap<String, f64>,
+    tracing: Tracing,
     timeouts: HashMap<String, f64>,
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: PoolConfig) -> Self {
+    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: Config) -> Self {
         Self {
             handle: handle,
             log: log,
             tx: tx,
             rx: rx,
-            cfg: cfg,
+            cfg: cfg.pool().clone(),
             pool: HashMap::new(),
-            tracing: HashMap::new(),
+            tracing: Tracing::new(cfg.tracing().probability()),
             timeouts: HashMap::new(),
         }
     }
@@ -220,11 +247,13 @@ impl Future for PoolTask {
                 Ok(Async::Ready(Some(event))) => {
                     match event {
                         Event::Service { name, func } => {
+                            let trace_bit = self.tracing.calculate_trace_bit(&name);
+
                             // Select the next service that is not reconnecting right now.
                             let handle = self.handle.clone();
                             let ref service = self.select_service(name, &handle);
 
-                            handle.spawn(func.call_box((service,)));
+                            handle.spawn(func.call_box((service, trace_bit)));
                         }
                         Event::OnServiceConnect(service) => {
                             match self.pool.get_mut(service.name()) {
@@ -246,7 +275,7 @@ impl Future for PoolTask {
                             }
                         }
                         Event::OnTracingUpdates(tracing) => {
-                            self.tracing = tracing;
+                            self.tracing.reset(tracing);
                         }
                         Event::OnTimeoutUpdates(timeouts) => {
                             self.timeouts = timeouts;

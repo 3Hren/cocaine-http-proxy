@@ -149,6 +149,27 @@ impl PoolConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TracingConfig {
+    path: String,
+    header: String,
+    probability: f64,
+}
+
+impl TracingConfig {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn header(&self) -> &str {
+        &self.header
+    }
+
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     network: NetworkConfig,
     threads: Option<usize>,
@@ -156,6 +177,7 @@ pub struct Config {
     logging: LoggingConfig,
     monitoring: MonitoringConfig,
     pool: PoolConfig,
+    tracing: TracingConfig,
 }
 
 impl Config {
@@ -170,6 +192,10 @@ impl Config {
     fn sanitize(cfg: &Config) -> Result<(), Box<Error>> {
         if let Some(0) = cfg.threads {
             return Err("number of worker threads must be a positive value (or absent)".into());
+        }
+
+        if cfg.tracing.probability < 0.0 || cfg.tracing.probability > 1.0 {
+            return Err("tracing probability must fit in [0.0; 1.0]".into());
         }
 
         Ok(())
@@ -197,5 +223,9 @@ impl Config {
 
     pub fn pool(&self) -> &PoolConfig {
         &self.pool
+    }
+
+    pub fn tracing(&self) -> &TracingConfig {
+        &self.tracing
     }
 }
