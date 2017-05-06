@@ -12,10 +12,11 @@
 //! - [x] unicorn support for timeouts.
 //! - [x] headers in the framework.
 //! - [x] tracing.
+//! - [x] retry policy for applications.
+//! - [ ] forward Authorization header.
 //! - [ ] timeouts.
 //! - [ ] request timeouts.
 //! - [ ] clean code.
-//! - [ ] retry policy for applications.
 //! - [ ] metrics: histograms.
 //! - [ ] JSON RPC.
 //! - [ ] MDS direct.
