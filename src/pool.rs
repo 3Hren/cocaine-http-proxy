@@ -246,11 +246,9 @@ impl Future for PoolTask {
                             }
                         }
                         Event::OnTracingUpdates(tracing) => {
-                            cocaine_log!(self.log, Severity::Info, "updated tracing map");
                             self.tracing = tracing;
                         }
                         Event::OnTimeoutUpdates(timeouts) => {
-                            cocaine_log!(self.log, Severity::Info, "updated timeouts map");
                             self.timeouts = timeouts;
                         }
                     }

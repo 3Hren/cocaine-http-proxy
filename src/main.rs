@@ -1,48 +1,10 @@
-#![feature(box_syntax, fnbox, integer_atomics)]
-
-extern crate time;
-extern crate rand;
-extern crate log;
-
 #[macro_use]
 extern crate clap;
-extern crate futures;
-extern crate rmp_serde as rmps;
-extern crate rmpv;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate serde_yaml;
-extern crate uuid;
-
-#[macro_use(o, slog_log, slog_info, slog_warn)]
-extern crate slog;
-extern crate slog_term;
-extern crate tokio_core;
-extern crate tokio_proto;
-extern crate tokio_service;
-extern crate itertools;
-extern crate net2;
-#[macro_use]
-extern crate hyper;
-extern crate num_cpus;
-
-#[macro_use]
-extern crate cocaine;
+extern crate cocaine_http_proxy;
 
 use clap::{App, Arg};
 
-use config::Config;
-
-mod config;
-mod logging;
-mod metrics;
-mod pool;
-mod proxy;
-mod route;
-mod server;
-mod service;
+use cocaine_http_proxy::Config;
 
 fn main() {
     let matches = App::new(crate_name!())
@@ -67,5 +29,5 @@ fn main() {
         }
     };
 
-    proxy::run(config).expect("failed to run the server");
+    cocaine_http_proxy::run(config).expect("failed to run the server");
 }

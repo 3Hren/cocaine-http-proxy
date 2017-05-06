@@ -10,7 +10,7 @@
 //! - [x] fixed-size pool balancing.
 //! - [x] unicorn support for tracing.
 //! - [x] unicorn support for timeouts.
-//! - [ ] headers in the framework.
+//! - [x] headers in the framework.
 //! - [ ] tracing.
 //! - [ ] timeouts.
 //! - [ ] request timeouts.
@@ -23,6 +23,37 @@
 //! - [ ] plugin system.
 //! - [ ] logging review.
 
+#![feature(box_syntax, fnbox, integer_atomics)]
+
+extern crate time;
+extern crate rand;
+extern crate log;
+
+extern crate futures;
+extern crate rmp_serde as rmps;
+extern crate rmpv;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
+extern crate serde_yaml;
+extern crate uuid;
+
+#[macro_use(o, slog_log, slog_info, slog_warn)]
+extern crate slog;
+extern crate slog_term;
+extern crate tokio_core;
+extern crate tokio_proto;
+extern crate tokio_service;
+extern crate itertools;
+extern crate net2;
+#[macro_use]
+extern crate hyper;
+extern crate num_cpus;
+
+#[macro_use]
+extern crate cocaine;
+
 use std::borrow::Cow;
 use std::error;
 use std::io;
@@ -33,31 +64,39 @@ use std::vec::IntoIter;
 
 use futures::{future, Future};
 use futures::sync::mpsc;
-use hyper::{self, StatusCode};
+use hyper::StatusCode;
 use hyper::server::{Request, Response};
 use itertools::Itertools;
+use serde::Serializer;
+use serde::ser::SerializeMap;
+use slog::DrainExt;
 use tokio_core::reactor::{Core, Handle};
 use tokio_service::{Service};
-
-use slog;
-use slog_term;
-use slog::DrainExt;
 
 use cocaine::{Builder, Error};
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::{Locator, Unicorn};
 
-use config::{Config, PoolConfig};
-use logging::{Loggers};
-use pool::{SubscribeTask, Event, PoolTask, RoutingGroupsUpdateTask};
-use route::Route;
-use route::app::AppRoute;
-use route::performance::PerformanceRoute;
-use server::{ServerBuilder, ServerGroup};
-use service::{ServiceFactory, ServiceFactorySpawn};
-use service::monitor::MonitorServiceFactoryFactory;
+use self::metrics::{Count, Counter, Meter, RateMeter};
+pub use self::config::Config;
+use self::config::PoolConfig;
+use self::logging::{Loggers};
+use self::pool::{SubscribeTask, Event, PoolTask, RoutingGroupsUpdateTask};
+use self::route::Route;
+use self::route::app::AppRoute;
+use self::route::performance::PerformanceRoute;
+use self::server::{ServerBuilder, ServerGroup};
+use self::service::{ServiceFactory, ServiceFactorySpawn};
+use self::service::monitor::MonitorServiceFactoryFactory;
 
-// TODO: Move to service/proxy.rs
+mod config;
+mod logging;
+mod metrics;
+mod pool;
+mod route;
+mod server;
+mod service;
+
 struct ProxyService {
     log: Logger,
     metrics: Arc<Metrics>,
@@ -166,7 +205,7 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
 
     let log = slog::Logger::root(
         slog_term::streamer().stdout().compact().build().fuse(),
-        o!("🛠️  Configure" => crate_name!())
+        o!("🛠️  Configure" => env!("CARGO_PKG_DESCRIPTION"))
     );
 
     slog_info!(log, "mount cocaine HTTP proxy server on {}", config.network().addr());
@@ -211,10 +250,6 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
 
     Ok(())
 }
-
-use serde::Serializer;
-use serde::ser::SerializeMap;
-use metrics::{Count, Counter, Meter, RateMeter};
 
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {

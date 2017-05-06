@@ -15,8 +15,8 @@ use hyper::server::{Request, Response};
 
 use serde_json;
 
+use Metrics;
 use config::Config;
-use proxy::Metrics;
 use service::{ServiceFactory, ServiceFactorySpawn};
 
 fn response_json<T: Serialize>(value: &T) -> Response {

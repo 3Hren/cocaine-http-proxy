@@ -42,6 +42,28 @@ logging:
     source: proxy/access
     severity: warn
 
+# Name of the unified configuration service that is used for fine-grained
+# cluster-wide configuration, like tracing, worker timeouts etc.
+unicorn: unicorn
+
+# Tracing settings.
+# The HTTP proxy uses Unicorn service for obtaining tracing probabilities
+# and performs subscriptions for updates.
+tracing:
+  # Path to the Unicorn node, which contains tracing settings.
+  path: /tracing
+  # HTTP header, which transports a trace id value.
+  # If the header is absent a proxy will generate a random 64-bit value.
+  header: X-Request-Id
+  # Default deep-tracing probability.
+  # If triggered all logs during the tracing path will be written, no matter
+  # which filters are configured. Even debug logs.
+  probability: 0.01
+
+# Request timeout in seconds after which it will be canceled and the server
+# responds with 504 HTTP status code.
+timeout: 30.0
+
 # Service pool settings.
 pool:
   # Default pool limit for services.
