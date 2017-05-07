@@ -127,9 +127,10 @@ impl Service for ProxyService {
 
 impl Drop for ProxyService {
     fn drop(&mut self) {
-        match self.addr.take() {
-            Some(addr) => cocaine_log!(self.log, Severity::Info, "closed connection from {}", addr),
-            None => cocaine_log!(self.log, Severity::Info, "closed connection from Unix socket"),
+        if let Some(addr) = self.addr.take() {
+            cocaine_log!(self.log, Severity::Info, "closed connection from {}", addr);
+        } else {
+            cocaine_log!(self.log, Severity::Info, "closed connection from Unix socket");
         }
 
         self.metrics.connections.active.add(-1);
@@ -152,9 +153,10 @@ impl ServiceFactory for ProxyServiceFactory {
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
         self.metrics.connections.active.add(1);
         self.metrics.connections.accepted.add(1);
-        match addr {
-            Some(addr) => cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr),
-            None => cocaine_log!(self.log, Severity::Info, "accepted connection from Unix socket"),
+        if let Some(addr) = addr {
+            cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr);
+        } else {
+            cocaine_log!(self.log, Severity::Info, "accepted connection from Unix socket");
         }
 
         let service = ProxyService {
