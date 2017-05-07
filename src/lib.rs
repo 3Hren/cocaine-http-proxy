@@ -220,6 +220,8 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
     slog_info!(log, "mount cocaine HTTP proxy server on {}", config.network().addr());
     slog_info!(log, "mount monitor server on {0}, for more information about monitoring API visit `GET http://{0}/help`", config.monitoring().addr());
 
+    // TODO: Rewrite to vector of tasks.
+    // TODO: Make large strings language-dependant.
     let mut incomplete = false;
 
     let lg = log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));

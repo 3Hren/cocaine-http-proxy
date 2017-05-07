@@ -86,6 +86,7 @@ impl AppWithSafeRetry {
         let mut buf = vec![0; 8];
         LittleEndian::write_u64(&mut buf[..], trace);
         headers.push(hpack::Header::new(&b"trace_id"[..], buf.clone()));
+        // TODO: Well, we should generate separate span for each attempt.
         headers.push(hpack::Header::new(&b"span_id"[..], buf.clone()));
         LittleEndian::write_u64(&mut buf[..], 0);
         headers.push(hpack::Header::new(&b"parent_id"[..], buf));
