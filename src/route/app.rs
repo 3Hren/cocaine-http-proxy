@@ -27,29 +27,28 @@ use route::Route;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
-header! { (XRequestId, "X-Request-Id") => [String] }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct RequestId(u64);
+struct XRequestId(u64);
 
-impl Into<u64> for RequestId {
+impl Into<u64> for XRequestId {
     fn into(self) -> u64 {
         match self {
-            RequestId(v) => v
+            XRequestId(v) => v
         }
     }
 }
 
-impl Header for RequestId {
+impl Header for XRequestId {
     fn header_name() -> &'static str {
         "X-Request-Id"
     }
 
-    fn parse_header(raw: &Raw) -> Result<RequestId, hyper::Error> {
+    fn parse_header(raw: &Raw) -> Result<XRequestId, hyper::Error> {
         if let Some(line) = raw.one() {
             if let Ok(line) = str::from_utf8(line) {
                 if let Ok(val) = u64::from_str_radix(line, 16) {
-                    return Ok(RequestId(val));
+                    return Ok(XRequestId(val));
                 }
             }
         }
@@ -211,7 +210,7 @@ impl Route for AppRoute {
                 let service = service.to_string();
                 let event = event.to_string();
                 let trace = if let Some(trace) = req.headers().get_raw(&self.trace_header) {
-                    match RequestId::parse_header(trace) {
+                    match XRequestId::parse_header(trace) {
                         Ok(v) => v.into(),
                         Err(..) => {
                             let res = Response::new()
