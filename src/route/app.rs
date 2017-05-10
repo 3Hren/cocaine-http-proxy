@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::str;
+use std::sync::Arc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
@@ -9,7 +10,7 @@ use rand;
 use futures::{future, Async, BoxFuture, Future, Poll};
 use futures::sync::{oneshot, mpsc};
 
-use hyper::{self, Method, StatusCode};
+use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
 use hyper::server::{Response, Request};
 
@@ -61,6 +62,44 @@ impl Header for XRequestId {
     }
 }
 
+#[derive(Clone)]
+struct AppRequest {
+    service: String,
+    event: String,
+    trace: u64,
+    method: Method,
+    version: u8,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+impl AppRequest {
+    fn new(service: String, event: String, trace: u64, req: &Request) -> Self {
+        let headers = req.headers().iter().map(|header| {
+            (header.name().to_string(), header.value_string())
+        }).collect();
+
+
+        let version = if let HttpVersion::Http11 = req.version() {
+            1
+        } else {
+            0
+        };
+
+        Self {
+            service: service,
+            event: event,
+            trace: trace,
+            method: req.method().clone(),
+            version: version,
+            path: req.path().into(),
+            headers: headers,
+            body: String::new(),
+        }
+    }
+}
+
 /// A future that retries application invocation on receiving "safe" error, meaning that it is safe
 /// to retry it again until the specified limit reached.
 ///
@@ -69,23 +108,18 @@ impl Header for XRequestId {
 struct AppWithSafeRetry {
     attempts: u32,
     limit: u32,
-
-    method: Method,
-
-    service: String,
-    event: String,
+    request: Arc<AppRequest>,
     txs: Vec<mpsc::UnboundedSender<Event>>,
-
     headers: Vec<hpack::Header>,
     current: Option<BoxFuture<Option<(Response, u64)>, hyper::Error>>,
 }
 
 impl AppWithSafeRetry {
-    fn new(service: String, event: String, trace: u64, request: &Request, txs: Vec<mpsc::UnboundedSender<Event>>, limit: u32) -> Self {
+    fn new(request: AppRequest, txs: Vec<mpsc::UnboundedSender<Event>>, limit: u32) -> Self {
         let mut headers = Vec::with_capacity(4);
 
         let mut buf = vec![0; 8];
-        LittleEndian::write_u64(&mut buf[..], trace);
+        LittleEndian::write_u64(&mut buf[..], request.trace);
         headers.push(hpack::Header::new(&b"trace_id"[..], buf.clone()));
         // TODO: Well, we should generate separate span for each attempt.
         headers.push(hpack::Header::new(&b"span_id"[..], buf.clone()));
@@ -95,9 +129,7 @@ impl AppWithSafeRetry {
         let mut res = Self {
             attempts: 1,
             limit: limit,
-            method: request.method().clone(),
-            service: service,
-            event: event,
+            request: Arc::new(request),
             txs: txs,
             headers: headers,
             current: None,
@@ -109,25 +141,30 @@ impl AppWithSafeRetry {
     }
 
     fn make_future(&self) -> BoxFuture<Option<(Response, u64)>, hyper::Error> {
-        let event = self.event.clone();
         let (tx, rx) = oneshot::channel();
 
-        let method = self.method.clone();
+        let request = self.request.clone();
         let mut headers = self.headers.clone();
         let ev = Event::Service {
-            name: self.service.clone(),
+            name: request.service.clone(),
             func: box move |service: &Service, trace_bit: bool| {
                 if trace_bit {
                     headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 
-                let future = service.call(0, &vec![event], headers, AppReadDispatch {
+                let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {
                     tx: tx,
                     body: None,
                     response: Some(Response::new()),
                 }).and_then(move |tx| {
-                    // TODO: Proper arguments.
-                    let buf = rmps::to_vec(&(method.to_string(), "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
+                    let buf = rmps::to_vec(&(
+                        request.method.to_string(),
+                        &request.path,
+                        &request.version,
+                        &request.headers[..],
+                        // TODO: Proper body.
+                        ""
+                    )).unwrap();
                     tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
                     tx.send(2, &[0; 0]);
                     Ok(())
@@ -228,7 +265,8 @@ impl Route for AppRoute {
                 };
 
                 let log = AccessLogger::new(self.log.clone(), req);
-                let future = AppWithSafeRetry::new(service.clone(), event.clone(), trace, req, self.txs.clone(), 3)
+                // TODO: Collect body first of all.
+                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.txs.clone(), 3)
                     .and_then(move |(mut res, bytes_sent)| {
                         res.headers_mut().set_raw("X-Powered-By", "Cocaine");
                         log.commit(trace, res.status().into(), bytes_sent);

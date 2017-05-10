@@ -229,6 +229,7 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
 
     // TODO: Rewrite to vector of tasks.
     // TODO: Make large strings language-dependant.
+    // TODO: When monitoring server comes this will be eliminated except the summary message.
     let mut incomplete = false;
 
     let lg = log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
