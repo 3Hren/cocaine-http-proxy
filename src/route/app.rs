@@ -9,7 +9,7 @@ use rand;
 use futures::{future, Async, BoxFuture, Future, Poll};
 use futures::sync::{oneshot, mpsc};
 
-use hyper::{self, StatusCode};
+use hyper::{self, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
 use hyper::server::{Response, Request};
 
@@ -70,6 +70,8 @@ struct AppWithSafeRetry {
     attempts: u32,
     limit: u32,
 
+    method: Method,
+
     service: String,
     event: String,
     txs: Vec<mpsc::UnboundedSender<Event>>,
@@ -79,7 +81,7 @@ struct AppWithSafeRetry {
 }
 
 impl AppWithSafeRetry {
-    fn new(service: String, event: String, trace: u64, txs: Vec<mpsc::UnboundedSender<Event>>, limit: u32) -> Self {
+    fn new(service: String, event: String, trace: u64, request: &Request, txs: Vec<mpsc::UnboundedSender<Event>>, limit: u32) -> Self {
         let mut headers = Vec::with_capacity(4);
 
         let mut buf = vec![0; 8];
@@ -93,6 +95,7 @@ impl AppWithSafeRetry {
         let mut res = Self {
             attempts: 1,
             limit: limit,
+            method: request.method().clone(),
             service: service,
             event: event,
             txs: txs,
@@ -109,6 +112,7 @@ impl AppWithSafeRetry {
         let event = self.event.clone();
         let (tx, rx) = oneshot::channel();
 
+        let method = self.method.clone();
         let mut headers = self.headers.clone();
         let ev = Event::Service {
             name: self.service.clone(),
@@ -121,9 +125,9 @@ impl AppWithSafeRetry {
                     tx: tx,
                     body: None,
                     response: Some(Response::new()),
-                }).and_then(|tx| {
+                }).and_then(move |tx| {
                     // TODO: Proper arguments.
-                    let buf = rmps::to_vec(&("GET", "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
+                    let buf = rmps::to_vec(&(method.to_string(), "/", 1, &[("Content-Type", "text/plain")], "")).unwrap();
                     tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
                     tx.send(2, &[0; 0]);
                     Ok(())
@@ -224,7 +228,7 @@ impl Route for AppRoute {
                 };
 
                 let log = AccessLogger::new(self.log.clone(), req);
-                let future = AppWithSafeRetry::new(service.clone(), event.clone(), trace, self.txs.clone(), 3)
+                let future = AppWithSafeRetry::new(service.clone(), event.clone(), trace, req, self.txs.clone(), 3)
                     .and_then(move |(mut res, bytes_sent)| {
                         res.headers_mut().set_raw("X-Powered-By", "Cocaine");
                         log.commit(trace, res.status().into(), bytes_sent);
