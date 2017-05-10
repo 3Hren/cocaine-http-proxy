@@ -300,6 +300,7 @@ struct AppReadDispatch {
 impl Dispatch for AppReadDispatch {
     fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
         match protocol::deserialize::<protocol::Streaming<rmps::RawRef>>(ty, data).flatten() {
+            // TODO: Support chunked transfer encoding.
             Ok(Some(data)) => {
                 if self.body.is_none() {
                     let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
