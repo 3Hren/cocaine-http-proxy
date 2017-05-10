@@ -25,7 +25,7 @@
 //! - [ ] plugin system.
 //! - [ ] logging review.
 
-#![feature(box_syntax, fnbox, integer_atomics)]
+#![feature(box_syntax, fnbox, integer_atomics, const_fn)]
 
 extern crate byteorder;
 extern crate time;
@@ -98,6 +98,11 @@ mod pool;
 mod route;
 mod server;
 mod service;
+
+/// Returns the crate name from your Cargo.toml at compile time.
+const fn crate_name() -> &'static str {
+    env!("CARGO_PKG_DESCRIPTION")
+}
 
 struct ProxyService {
     log: Logger,
@@ -216,7 +221,7 @@ fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Resu
 
     let log = slog::Logger::root(
         slog_term::streamer().stdout().compact().build().fuse(),
-        o!("🛠️  Configure" => env!("CARGO_PKG_DESCRIPTION"))
+        o!("🛠️  Configure" => crate_name())
     );
 
     slog_info!(log, "mount cocaine HTTP proxy server on {}", config.network().addr());
