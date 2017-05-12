@@ -72,6 +72,7 @@ use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
 use self::pool::{SubscribeTask, Event, RoutingGroupsUpdateTask};
+use self::route::Router;
 use self::route::app::AppRoute;
 use self::route::performance::PerformanceRoute;
 use self::server::{ServerBuilder, ServerGroup};
@@ -142,16 +143,16 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     }
 
     // let routes = make_routes(txs);
-    let mut routes = Vec::new();
-    routes.push(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())) as Arc<_>);
-    routes.push(Arc::new(PerformanceRoute::new(txs.clone(), log.access().clone())) as Arc<_>);
+    let mut router = Router::new();
+    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())));
+    router.add(Arc::new(PerformanceRoute::new(txs.clone(), log.access().clone())));
 
     let factory = Arc::new(ProxyServiceFactoryFactory::new(
         txs.clone(),
         rxs,
         log.common().clone(),
         metrics.clone(),
-        routes,
+        router,
         config.clone()
     ));
 

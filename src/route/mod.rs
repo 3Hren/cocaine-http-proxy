@@ -1,6 +1,9 @@
-use futures::Future;
+use std::fmt::{self, Debug, Formatter};
+use std::sync::Arc;
 
-use hyper;
+use futures::{future, Future};
+
+use hyper::{self, StatusCode};
 use hyper::server::{Response, Request};
 
 pub mod app;
@@ -18,4 +21,39 @@ pub trait Route: Send + Sync {
     /// it detects all required headers, but fails to match the request method.
     /// At last a route can be neutral to the request, returning `None`.
     fn process(&self, request: &Request) -> Option<Self::Future>;
+}
+
+#[derive(Clone)]
+pub struct Router {
+    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>
+}
+
+impl Router {
+    pub fn new() -> Self {
+        Self { routes: Vec::new() }
+    }
+
+    pub fn add(&mut self, route: Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>) {
+        self.routes.push(route);
+    }
+
+    /// Tries to process the request, returning a future on first route match. If none of them
+    /// match, returns a ready future with `NotFound` HTTP status.
+    pub fn process(&self, req: &Request) -> Box<Future<Item = Response, Error = hyper::Error>> {
+        for route in &self.routes {
+            if let Some(future) = route.process(&req) {
+                return future;
+            }
+        }
+
+        future::ok(Response::new().with_status(StatusCode::NotFound)).boxed()
+    }
+}
+
+impl Debug for Router {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_struct("Router")
+            .field("routes", &"...")
+            .finish()
+    }
 }

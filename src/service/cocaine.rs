@@ -3,28 +3,28 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::vec::IntoIter;
 
-use futures::{future, Future};
+use futures::Future;
 use futures::sync::mpsc;
 use tokio_core::reactor::Handle;
 use tokio_service::Service;
 
-use hyper::{self, StatusCode};
+use hyper;
 use hyper::server::{Request, Response};
 
 use cocaine::logging::{Severity, Logger};
 
 use Metrics;
 use config::Config;
-use service::{ServiceFactory, ServiceFactorySpawn};
-use route::Route;
-use pool::{Event, PoolTask};
 use metrics::{Meter, Count};
+use pool::{Event, PoolTask};
+use route::Router;
+use service::{ServiceFactory, ServiceFactorySpawn};
 
 pub struct ProxyService {
     log: Logger,
     metrics: Arc<Metrics>,
     addr: Option<SocketAddr>,
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
+    router: Router,
 }
 
 impl Service for ProxyService {
@@ -35,14 +35,7 @@ impl Service for ProxyService {
 
     fn call(&self, req: Request) -> Self::Future {
         self.metrics.requests.mark(1);
-
-        for route in &self.routes {
-            if let Some(future) = route.process(&req) {
-                return future;
-            }
-        }
-
-        future::ok(Response::new().with_status(StatusCode::NotFound)).boxed()
+        self.router.process(&req)
     }
 }
 
@@ -62,7 +55,7 @@ impl Drop for ProxyService {
 pub struct ProxyServiceFactory {
     log: Logger,
     metrics: Arc<Metrics>,
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
+    router: Router,
 }
 
 impl ServiceFactory for ProxyServiceFactory {
@@ -84,7 +77,7 @@ impl ServiceFactory for ProxyServiceFactory {
             log: self.log.clone(),
             metrics: self.metrics.clone(),
             addr: addr,
-            routes: self.routes.clone(),
+            router: self.router.clone(),
         };
 
         Ok(service)
@@ -96,18 +89,18 @@ pub struct ProxyServiceFactoryFactory {
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
     log: Logger,
     metrics: Arc<Metrics>,
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>,
+    router: Router,
     cfg: Config,
 }
 
 impl ProxyServiceFactoryFactory {
-    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, rxs: Vec<mpsc::UnboundedReceiver<Event>>, log: Logger, metrics: Arc<Metrics>, routes: Vec<Arc<Route<Future=Box<Future<Item = Response, Error = hyper::Error>>>>>, cfg: Config) -> Self {
+    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, rxs: Vec<mpsc::UnboundedReceiver<Event>>, log: Logger, metrics: Arc<Metrics>, router: Router, cfg: Config) -> Self {
         Self {
             tx: Mutex::new(txs.clone().into_iter()),
             rx: Mutex::new(rxs.into_iter()),
             log: log,
             metrics: metrics,
-            routes: routes,
+            router: router,
             cfg: cfg,
         }
     }
@@ -129,7 +122,7 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
         ProxyServiceFactory {
             log: self.log.clone(),
             metrics: self.metrics.clone(),
-            routes: self.routes.clone(),
+            router: self.router.clone(),
         }
     }
 }
