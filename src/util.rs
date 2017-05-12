@@ -14,6 +14,12 @@ use Config;
 
 pub fn run_dashboard(cfg: Config) -> JoinHandle<Result<(), Error>> {
     thread::spawn(move || {
+        let term = Term::stdout();
+
+        if !term.is_term() {
+            return Ok(());
+        }
+
         let locator_addrs = cfg.locators()
             .iter()
             .map(|&(addr, port)| SocketAddr::new(addr, port))
@@ -35,8 +41,6 @@ pub fn run_dashboard(cfg: Config) -> JoinHandle<Result<(), Error>> {
         let unicorn = Builder::new("unicorn")
             .locator_addrs(locator_addrs.clone())
             .build(&core.handle());
-
-        let term = Term::stdout();
 
         loop {
             let (.., width) = term.size();
