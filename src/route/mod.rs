@@ -23,9 +23,11 @@ pub trait Route: Send + Sync {
     fn process(&self, request: &Request) -> Option<Self::Future>;
 }
 
+pub type HyperRoute = Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>;
+
 #[derive(Clone)]
 pub struct Router {
-    routes: Vec<Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>>
+    routes: Vec<HyperRoute>
 }
 
 impl Router {
@@ -33,7 +35,8 @@ impl Router {
         Self { routes: Vec::new() }
     }
 
-    pub fn add(&mut self, route: Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>) {
+    /// Adds a route to the `Router`.
+    pub fn add(&mut self, route: HyperRoute) {
         self.routes.push(route);
     }
 

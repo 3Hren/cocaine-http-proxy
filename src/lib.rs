@@ -74,7 +74,7 @@ use self::logging::{Loggers};
 use self::pool::{SubscribeTask, Event, RoutingGroupsUpdateTask};
 use self::route::Router;
 use self::route::app::AppRoute;
-use self::route::perf::PerformanceRoute;
+use self::route::perf::PerfRoute;
 use self::server::{ServerBuilder, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
@@ -145,7 +145,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // let routes = make_routes(txs);
     let mut router = Router::new();
     router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())));
-    router.add(Arc::new(PerformanceRoute::new(txs.clone(), log.access().clone())));
+    router.add(Arc::new(PerfRoute::new(txs.clone(), log.access().clone())));
 
     let factory = Arc::new(ProxyServiceFactoryFactory::new(
         txs.clone(),

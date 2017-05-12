@@ -22,12 +22,12 @@ use logging::AccessLogger;
 use pool::Event;
 use route::Route;
 
-pub struct PerformanceRoute {
+pub struct PerfRoute {
     txs: Vec<mpsc::UnboundedSender<Event>>,
     log: Logger,
 }
 
-impl PerformanceRoute {
+impl PerfRoute {
     pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, log: Logger) -> Self {
         Self {
             txs: txs,
@@ -36,7 +36,7 @@ impl PerformanceRoute {
     }
 }
 
-impl Route for PerformanceRoute {
+impl Route for PerfRoute {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
     fn process(&self, req: &Request) -> Option<Self::Future> {
