@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio_core::reactor::Handle;
 use tokio_service::Service;
 
+pub mod cocaine;
 pub mod monitor;
 
 /// Creates new `Service` values.
