@@ -7,7 +7,7 @@ use hyper::{self, StatusCode};
 use hyper::server::{Response, Request};
 
 pub mod app;
-pub mod performance;
+pub mod perf;
 
 pub trait Route: Send + Sync {
     type Future: Future<Item = Response, Error = hyper::Error>;

@@ -74,7 +74,7 @@ use self::logging::{Loggers};
 use self::pool::{SubscribeTask, Event, RoutingGroupsUpdateTask};
 use self::route::Router;
 use self::route::app::AppRoute;
-use self::route::performance::PerformanceRoute;
+use self::route::perf::PerformanceRoute;
 use self::server::{ServerBuilder, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
