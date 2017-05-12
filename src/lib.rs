@@ -24,15 +24,22 @@
 //! - [ ] Streaming logging through HTTP.
 //! - [ ] plugin system.
 //! - [ ] logging review.
+//! - [ ] support Cocaine authentication.
 
-#![feature(box_syntax, fnbox, integer_atomics, const_fn)]
+#![feature(box_syntax, fnbox, integer_atomics)]
 
 extern crate byteorder;
-extern crate time;
-extern crate rand;
-extern crate log;
-
+#[macro_use]
+extern crate cocaine;
+extern crate console;
 extern crate futures;
+#[macro_use]
+extern crate hyper;
+extern crate itertools;
+extern crate log;
+extern crate net2;
+extern crate num_cpus;
+extern crate rand;
 extern crate rmp_serde as rmps;
 extern crate rmpv;
 extern crate serde;
@@ -40,24 +47,12 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate serde_yaml;
-extern crate uuid;
-
-#[macro_use(o, slog_log, slog_info, slog_warn)]
-extern crate slog;
-extern crate slog_term;
+extern crate time;
 extern crate tokio_core;
 extern crate tokio_proto;
 extern crate tokio_service;
-extern crate itertools;
-extern crate net2;
-#[macro_use]
-extern crate hyper;
-extern crate num_cpus;
+extern crate uuid;
 
-#[macro_use]
-extern crate cocaine;
-
-use std::borrow::Cow;
 use std::error;
 use std::io;
 use std::net::SocketAddr;
@@ -69,14 +64,12 @@ use futures::{future, Future};
 use futures::sync::mpsc;
 use hyper::StatusCode;
 use hyper::server::{Request, Response};
-use itertools::Itertools;
 use serde::Serializer;
 use serde::ser::SerializeMap;
-use slog::DrainExt;
 use tokio_core::reactor::{Core, Handle};
 use tokio_service::{Service};
 
-use cocaine::{Builder, Error};
+use cocaine::Builder;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::{Locator, Unicorn};
 
@@ -98,11 +91,7 @@ mod pool;
 mod route;
 mod server;
 mod service;
-
-/// Returns the crate name from your Cargo.toml at compile time.
-const fn crate_name() -> &'static str {
-    env!("CARGO_PKG_DESCRIPTION")
-}
+pub mod util;
 
 struct ProxyService {
     log: Logger,
@@ -205,71 +194,6 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
     }
 }
 
-fn check_connection<N>(name: N, locator_addrs: Vec<SocketAddr>, core: &mut Core) -> Result<(), Error>
-    where N: Into<Cow<'static, str>>
-{
-    let service = Builder::new(name)
-        .locator_addrs(locator_addrs)
-        .build(&core.handle());
-
-    core.run(service.connect())
-}
-
-fn check_prerequisites(config: &Config, locator_addrs: &Vec<SocketAddr>) -> Result<(), Error> {
-    let mut core = Core::new()
-        .map_err(Error::Io)?;
-
-    let log = slog::Logger::root(
-        slog_term::streamer().stdout().compact().build().fuse(),
-        o!("🛠️  Configure" => crate_name())
-    );
-
-    slog_info!(log, "mount cocaine HTTP proxy server on {}", config.network().addr());
-    slog_info!(log, "mount monitor server on {0}, for more information about monitoring API visit `GET http://{0}/help`", config.monitoring().addr());
-
-    // TODO: Rewrite to vector of tasks.
-    // TODO: Make large strings language-dependant.
-    // TODO: When monitoring server comes this will be eliminated except the summary message.
-    let mut incomplete = false;
-
-    let lg = log.new(o!("Service" => format!("locator on {}", locator_addrs.iter().join(", "))));
-    match check_connection("locator", locator_addrs.clone(), &mut core) {
-        Ok(()) => slog_info!(lg, "configured cloud entry points using locator(s) specified above"),
-        Err(err) => {
-            incomplete = true;
-            slog_warn!(lg, "failed to establish connection to the locator(s) specified above: {}", err);
-        }
-    }
-
-    let lg = log.new(o!("Service" => "logging"));
-    for &(ty, ref cfg) in &[("common", config.logging().common()), ("access", config.logging().access())] {
-        match check_connection(cfg.name().to_string(), locator_addrs.clone(), &mut core) {
-            Ok(()) => slog_info!(lg, "configured `{}` logging using `{}` service with `{}` source and `{}` severity", ty, cfg.name(), cfg.source(), cfg.severity()),
-            Err(err) => {
-                incomplete = true;
-                slog_warn!(lg, "failed to establish connection to the logging service `{}`: {}", cfg.name(), err);
-            }
-        }
-    }
-
-    let lg = log.new(o!("Service" => "unicorn"));
-    match check_connection("unicorn", locator_addrs.clone(), &mut core) {
-        Ok(()) => slog_info!(lg, "configured unicorn service"),
-        Err(err) => {
-            incomplete = true;
-            slog_warn!(lg, "failed to establish connection to the unicorn service: {}", err);
-        }
-    }
-
-    if incomplete {
-        slog_warn!(log, "some of required services has failed checking - ensure that `cocaine-runtime` is running and properly configured");
-    }
-
-    slog_info!(log, "launching ...");
-
-    Ok(())
-}
-
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {
     #[serde(serialize_with = "serialize_counter")]
@@ -312,8 +236,6 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         .iter()
         .map(|&(addr, port)| SocketAddr::new(addr, port))
         .collect::<Vec<SocketAddr>>();
-
-    check_prerequisites(&config, &locator_addrs)?;
 
     let log = Loggers::from(config.logging());
     let metrics = Arc::new(Metrics::default());

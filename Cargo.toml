@@ -30,9 +30,7 @@ rmp-serde = "0.13.1"
 rmpv = { version = "0.4", features = ["with-serde"] }
 
 clap = "~2.20.5"
-
-slog = "1.5"
-slog-term = "1.5"
+console = "0.3"
 
 [profile.dev]
 panic = "abort"
