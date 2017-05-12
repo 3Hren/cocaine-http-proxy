@@ -30,9 +30,17 @@ impl<'a> From<&'a LoggingConfig> for Loggers {
             ctx.create(cfg.source().to_owned())
         };
 
+        let common = factory(config.common());
+        let access = if config.common().name() == config.access().name() {
+            // Do not create a separate logger if they names are equal.
+            common.clone()
+        } else {
+            factory(config.access())
+        };
+
         Self {
-            common: factory(config.common()),
-            access: factory(config.access()),
+            common: common,
+            access: access,
         }
     }
 }
