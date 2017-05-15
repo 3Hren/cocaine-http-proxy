@@ -143,23 +143,11 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         rxs.push(rx);
     }
 
-    // let routes = make_routes(txs);
-    let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())));
-    router.add(Arc::new(PerfRoute::new(txs.clone(), log.access().clone())));
-
-    let factory = Arc::new(ProxyServiceFactoryFactory::new(
-        txs.clone(),
-        rxs,
-        log.common().clone(),
-        metrics.clone(),
-        router,
-        config.clone()
-    ));
-
+    // Start all periodic jobs.
     let thread: JoinHandle<Result<(), io::Error>> = {
         let cfg = config.tracing().clone();
         let log = log.common().clone();
+        let txs = txs.clone();
         thread::Builder::new().name("periodic".into()).spawn(move || {
             let mut core = Core::new()?;
             let locator = Builder::new("locator")
@@ -191,6 +179,19 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
             Ok(())
         })?
     };
+
+    let mut router = Router::new();
+    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())));
+    router.add(Arc::new(PerfRoute::new(txs.clone(), log.access().clone())));
+
+    let factory = Arc::new(ProxyServiceFactoryFactory::new(
+        txs,
+        rxs,
+        log.common().clone(),
+        metrics.clone(),
+        router,
+        config.clone()
+    ));
 
     let proxy = ServerBuilder::new(config.network().addr())
         .backlog(config.network().backlog())
