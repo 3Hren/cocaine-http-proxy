@@ -25,6 +25,7 @@
 //! - [ ] plugin system.
 //! - [ ] logging review.
 //! - [ ] support Cocaine authentication.
+//! - [ ] count 2xx, 4xx, 5xx HTTP codes.
 
 #![feature(box_syntax, fnbox, integer_atomics)]
 
