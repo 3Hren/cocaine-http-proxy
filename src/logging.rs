@@ -13,10 +13,13 @@ pub struct Loggers {
 }
 
 impl Loggers {
+    /// Returns a reference to the common logger that is used for general purpose logging.
     pub fn common(&self) -> &Logger {
         &self.common
     }
 
+    /// Returns a reference to the access logger that is used for logging summaries of HTTP
+    /// responses.
     pub fn access(&self) -> &Logger {
         &self.access
     }

@@ -7,6 +7,7 @@ use std::path::Path;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
+use num_cpus;
 use serde::Serializer;
 use serde::de::{self, Deserialize, Deserializer};
 use serde_yaml;
@@ -177,6 +178,7 @@ pub struct Config {
     threads: Option<usize>,
     locators: Vec<(IpAddr, u16)>,
     logging: LoggingConfig,
+    unicorn: String,
     monitoring: MonitoringConfig,
     pool: PoolConfig,
     tracing: TracingConfig,
@@ -207,8 +209,12 @@ impl Config {
         &self.network
     }
 
+    /// Returns the number of worker threads.
+    ///
+    /// Can be omitted in the config, in that case the number of CPUs of the current machine will
+    /// be returned.
     pub fn threads(&self) -> usize {
-        self.threads.unwrap_or(1)
+        self.threads.unwrap_or(num_cpus::get())
     }
 
     pub fn locators(&self) -> &Vec<(IpAddr, u16)> {
@@ -217,6 +223,12 @@ impl Config {
 
     pub fn logging(&self) -> &LoggingConfig {
         &self.logging
+    }
+
+    /// Returns the name of the Unicorn service that will be used for dynamic configuration and
+    /// subscriptions.
+    pub fn unicorn(&self) -> &str {
+        &self.unicorn
     }
 
     pub fn monitoring(&self) -> &MonitoringConfig {

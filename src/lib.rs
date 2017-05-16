@@ -61,7 +61,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use futures::Future;
-use futures::sync::mpsc;
+use futures::sync::mpsc::{self, UnboundedSender};
 use serde::Serializer;
 use serde::ser::SerializeMap;
 
@@ -76,7 +76,7 @@ use self::pool::{SubscribeTask, Event, RoutingGroupsUpdateTask};
 use self::route::Router;
 use self::route::app::AppRoute;
 use self::route::perf::PerfRoute;
-use self::server::{ServerBuilder, ServerGroup};
+use self::server::{ServerConfig, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
 
@@ -88,6 +88,8 @@ mod route;
 mod server;
 mod service;
 pub mod util;
+
+const THREAD_NAME_PERIODIC: &str = "periodic";
 
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {
@@ -125,35 +127,58 @@ pub struct Metrics {
     requests: RateMeter,
 }
 
+#[derive(Clone)]
+pub struct EventDispatcher<T> {
+    senders: Vec<T>,
+}
+
+impl EventDispatcher<UnboundedSender<Event>> {
+    pub fn new(senders: Vec<UnboundedSender<Event>>) -> Self {
+        Self { senders: senders }
+    }
+}
+
+impl<T: Clone> EventDispatcher<T> {
+    pub fn clone_senders(&self) -> Vec<T> {
+        self.senders.clone()
+    }
+}
+
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let locator_addrs = config.locators()
         .iter()
         .map(|&(addr, port)| SocketAddr::new(addr, port))
         .collect::<Vec<SocketAddr>>();
 
-    let log = Loggers::from(config.logging());
+    let logging = Loggers::from(config.logging());
     let metrics = Arc::new(Metrics::default());
 
-    let mut txs = Vec::new();
-    let mut rxs = Vec::new();
+    cocaine_log!(logging.common(), Severity::Debug, "starting Cocaine HTTP Proxy with {:?}", config);
 
-    for _ in 0..config.threads() {
-        let (tx, rx) = mpsc::unbounded();
-        txs.push(tx);
-        rxs.push(rx);
-    }
+    // Here we create several event channels that will deliver control events to services pools.
+    // We could create a separate thread pool for processing Cocaine invocation events with their
+    // own event loops, but it appeared that having common thread pool with both HTTP events and
+    // Cocaine one gives more RPS with lower latency.
+    let (txs, rxs) = itertools::repeat_call(|| mpsc::unbounded())
+        .take(config.threads())
+        .unzip();
 
-    // Start all periodic jobs.
+    let dispatcher = EventDispatcher::new(txs);
+
+    let txs = dispatcher.clone_senders();
+
+    // Start all periodic jobs in a separate thread that will produce control events for pools.
     let thread: JoinHandle<Result<(), io::Error>> = {
-        let cfg = config.tracing().clone();
-        let log = log.common().clone();
+        let cfg = config.clone();
+        let log = logging.common().clone();
         let txs = txs.clone();
-        thread::Builder::new().name("periodic".into()).spawn(move || {
+        let dispatcher = dispatcher.clone();
+        thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
             let locator = Builder::new("locator")
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
-            let unicorn = Builder::new("unicorn")
+            let unicorn = Builder::new(cfg.unicorn().to_owned())
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
@@ -162,7 +187,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                 let txs = txs.clone();
 
                 SubscribeTask::new(
-                    cfg.path().into(),
+                    cfg.tracing().path().into(),
                     Unicorn::new(unicorn),
                     log.clone(),
                     core.handle(),
@@ -181,31 +206,43 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     };
 
     let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), log.access().clone())));
-    router.add(Arc::new(PerfRoute::new(txs.clone(), log.access().clone())));
+    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), logging.access().clone())));
+    router.add(Arc::new(PerfRoute::new(txs.clone(), logging.access().clone())));
 
     let factory = Arc::new(ProxyServiceFactoryFactory::new(
         txs,
         rxs,
-        log.common().clone(),
+        logging.common().clone(),
         metrics.clone(),
         router,
         config.clone()
     ));
 
-    let proxy = ServerBuilder::new(config.network().addr())
+    let proxy_cfg = ServerConfig::new(config.network().addr())
         .backlog(config.network().backlog())
         .threads(config.threads());
-    let monitoring = ServerBuilder::new(config.monitoring().addr())
-        .threads(1);
+    let monitoring_cfg = ServerConfig::new(config.monitoring().addr())
+        .godfather(|id| format!("monitor {:02}", id));
 
-    cocaine_log!(log.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
+    cocaine_log!(logging.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new()?
-        .expose(proxy, factory)?
-        .expose(monitoring, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
+        .expose(proxy_cfg, factory)?
+        .expose(monitoring_cfg, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
         .run()?;
 
     thread.join().unwrap()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::THREAD_NAME_PERIODIC;
+
+    #[test]
+    fn test_thread_names_fit_in_system_bounds() {
+        // For NPTL the thread name is a meaningful C language string, whose length is restricted
+        // to 16 characters, including the terminating null byte ('\0').
+        assert!(THREAD_NAME_PERIODIC.len() < 16);
+    }
 }

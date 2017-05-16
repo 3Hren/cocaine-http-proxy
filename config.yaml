@@ -10,6 +10,7 @@ network:
 # Number of worker threads.
 # The proxy uses main thread for accepting connections and `threads` threads
 # for serving requests.
+# Can be omitted, meaning that the number of CPUs of the current machine should be utilized.
 threads: 24
 
 # Monitoring server settings.
@@ -61,9 +62,16 @@ tracing:
   # even debug logs.
   probability: 0.01
 
-# Request timeout in seconds after which it will be canceled and the server
+# Response timeout in seconds after which it will be canceled and the server
 # responds with 504 HTTP status code.
+# !Not implemented yet!
 timeout: 30.0
+
+# Fine-grained service timeouts settings.
+# !Not implemented yet!
+timeouts:
+  # Path to the Unicorn node, which contains timeouts settings.
+  path: /timeouts
 
 # Service pool settings.
 pool:
@@ -83,3 +91,10 @@ pool:
   services:
     echo:
       limit: 4
+
+# Pluggable routes for the main server. Can be "app", "perf", "jsonrpc".
+# !Not implemented yet!
+routes:
+  - app
+  - perf
+  - jsonrpc

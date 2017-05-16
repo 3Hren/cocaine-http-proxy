@@ -19,7 +19,6 @@ use hyper::server::{Http, Request, Response};
 
 use net2::TcpBuilder;
 use net2::unix::UnixTcpBuilderExt;
-use num_cpus;
 
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle, Timeout};
@@ -27,6 +26,7 @@ use tokio_service::Service;
 
 use service::{ServiceFactory, ServiceFactorySpawn};
 
+const DEFAULT_NUM_THREADS: usize = 1;
 const DEFAULT_BACKLOG: i32 = 1024;
 
 struct Info {
@@ -152,24 +152,62 @@ impl<T: ServiceFactory<Request=Request, Response=Response, Error=hyper::Error>> 
     }
 }
 
-pub struct ServerBuilder {
+/// A trait that can give a meaningful name for each worker thread created by the server.
+pub trait GodFather {
+    /// Called when it's time to give a name for a new thread.
+    fn name(&self, id: usize) -> String;
+}
+
+/// Default Godfather implementation that names all threads with "worker X" prefix where "X" - is
+/// an integral index.
+struct DefaultGodFather;
+
+impl GodFather for DefaultGodFather {
+    fn name(&self, id: usize) -> String {
+        format!("worker {:02}", id)
+    }
+}
+
+impl<F> GodFather for F
+    where F: Fn(usize) -> String
+{
+    fn name(&self, id: usize) -> String {
+        (*self)(id)
+    }
+}
+
+/// Chained server configuration.
+pub struct ServerConfig<G> {
     addr: SocketAddr,
     backlog: i32,
+    godfather: G,
     num_threads: usize,
 }
 
-impl ServerBuilder {
+impl ServerConfig<DefaultGodFather> {
     pub fn new(addr: SocketAddr) -> Self {
         Self {
             addr: addr,
             backlog: DEFAULT_BACKLOG,
-            num_threads: num_cpus::get(),
+            godfather: DefaultGodFather,
+            num_threads: DEFAULT_NUM_THREADS,
         }
     }
+}
 
+impl<G> ServerConfig<G> {
     pub fn backlog(mut self, backlog: i32) -> Self {
         self.backlog = backlog;
         self
+    }
+
+    pub fn godfather<T>(self, godfather: T) -> ServerConfig<T> {
+        ServerConfig {
+            addr: self.addr,
+            backlog: self.backlog,
+            godfather: godfather,
+            num_threads: self.num_threads,
+        }
     }
 
     pub fn threads(mut self, num_threads: usize) -> Self {
@@ -213,20 +251,20 @@ impl ServerGroup {
 
     /// 1. Binds socket, starts listening.
     /// 2. Spawns worker thread(s).
-    pub fn expose<F, T>(mut self, builder: ServerBuilder, factory: F) -> Result<Self, io::Error>
+    pub fn expose<F, T, G>(mut self, cfg: ServerConfig<G>, factory: F) -> Result<Self, io::Error>
         where F: ServiceFactorySpawn<Factory = T> + 'static,
-              T: ServiceFactory<Request = Request, Response = Response, Error = hyper::Error> + 'static
+              T: ServiceFactory<Request = Request, Response = Response, Error = hyper::Error> + 'static,
+              G: GodFather
     {
-        let listener = bind(builder.addr, builder.backlog, &self.core.handle())?;
+        let listener = bind(cfg.addr, cfg.backlog, &self.core.handle())?;
 
         let mut dispatchers = Vec::new();
         let factory = Arc::new(factory);
 
-        for id in 0..builder.num_threads {
+        for id in 0..cfg.num_threads {
             let (tx, rx) = mpsc::unbounded();
             let factory = factory.clone();
-            let name = format!("worker {:02}", id);
-            let thread = thread::Builder::new().name(name).spawn(move || {
+            let thread = thread::Builder::new().name(cfg.godfather.name(id)).spawn(move || {
                 let mut core = Core::new()?;
                 let handle = core.handle();
 
