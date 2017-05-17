@@ -61,7 +61,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use futures::Future;
-use futures::sync::mpsc::{self, UnboundedSender};
+use futures::sync::mpsc;
 use serde::Serializer;
 use serde::ser::SerializeMap;
 
@@ -72,7 +72,7 @@ use cocaine::service::{Locator, Unicorn};
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
-use self::pool::{SubscribeTask, Event, RoutingGroupsUpdateTask};
+use self::pool::{SubscribeTask, Event, EventDispatcher, RoutingGroupsUpdateTask};
 use self::route::Router;
 use self::route::app::AppRoute;
 use self::route::perf::PerfRoute;
@@ -90,6 +90,8 @@ mod service;
 pub mod util;
 
 const THREAD_NAME_PERIODIC: &str = "periodic";
+
+type ServiceBuilder<T> = Builder<T>;
 
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {
@@ -127,23 +129,6 @@ pub struct Metrics {
     requests: RateMeter,
 }
 
-#[derive(Clone)]
-pub struct EventDispatcher<T> {
-    senders: Vec<T>,
-}
-
-impl EventDispatcher<UnboundedSender<Event>> {
-    pub fn new(senders: Vec<UnboundedSender<Event>>) -> Self {
-        Self { senders: senders }
-    }
-}
-
-impl<T: Clone> EventDispatcher<T> {
-    pub fn clone_senders(&self) -> Vec<T> {
-        self.senders.clone()
-    }
-}
-
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let locator_addrs = config.locators()
         .iter()
@@ -163,39 +148,36 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         .take(config.threads())
         .unzip();
 
-    let dispatcher = EventDispatcher::new(txs);
+    let disp = EventDispatcher::new(txs);
 
-    let txs = dispatcher.clone_senders();
-
+//    let join = run_periodic(config.clone(), logging.common().clone(), dispatcher.clone());
     // Start all periodic jobs in a separate thread that will produce control events for pools.
     let thread: JoinHandle<Result<(), io::Error>> = {
         let cfg = config.clone();
         let log = logging.common().clone();
-        let txs = txs.clone();
-        let dispatcher = dispatcher.clone();
+        let disp = disp.clone();
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
-            let locator = Builder::new("locator")
+            let locator = ServiceBuilder::new("locator")
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
-            let unicorn = Builder::new(cfg.unicorn().to_owned())
+            let unicorn = ServiceBuilder::new(cfg.unicorn().to_owned())
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
-            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), txs.clone(), log.clone());
+            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), disp.clone(), log.clone());
             let tracing = {
-                let txs = txs.clone();
+                let log = log.clone();
+                let disp = disp.clone();
 
                 SubscribeTask::new(
                     cfg.tracing().path().into(),
-                    Unicorn::new(unicorn),
+                    Unicorn::new(unicorn.clone()),
                     log.clone(),
                     core.handle(),
                     move |tracing| {
                         cocaine_log!(log, Severity::Info, "updated tracing config with {} entries", tracing.len());
-                        for tx in &txs {
-                            tx.send(Event::OnTracingUpdates(tracing.clone())).unwrap();
-                        }
+                        disp.send_all(|| Event::OnTracingUpdates(tracing.clone()));
                     }
                 )
             };
@@ -206,11 +188,11 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     };
 
     let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(txs.clone(), config.tracing().header().into(), logging.access().clone())));
-    router.add(Arc::new(PerfRoute::new(txs.clone(), logging.access().clone())));
+    router.add(Arc::new(AppRoute::new(disp.clone(), config.tracing().header().into(), logging.access().clone())));
+    router.add(Arc::new(PerfRoute::new(disp.clone(), logging.access().clone())));
 
     let factory = Arc::new(ProxyServiceFactoryFactory::new(
-        txs,
+        disp.into_senders(),
         rxs,
         logging.common().clone(),
         metrics.clone(),

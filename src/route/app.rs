@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use rand;
 
 use futures::{future, Async, BoxFuture, Future, Poll};
-use futures::sync::{oneshot, mpsc};
+use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
@@ -23,7 +23,7 @@ use cocaine::logging::Logger;
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
-use pool::Event;
+use pool::{Event, EventDispatcher};
 use route::Route;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
@@ -109,13 +109,13 @@ struct AppWithSafeRetry {
     attempts: u32,
     limit: u32,
     request: Arc<AppRequest>,
-    txs: Vec<mpsc::UnboundedSender<Event>>,
+    dispatcher: EventDispatcher,
     headers: Vec<hpack::Header>,
     current: Option<BoxFuture<Option<(Response, u64)>, hyper::Error>>,
 }
 
 impl AppWithSafeRetry {
-    fn new(request: AppRequest, txs: Vec<mpsc::UnboundedSender<Event>>, limit: u32) -> Self {
+    fn new(request: AppRequest, dispatcher: EventDispatcher, limit: u32) -> Self {
         let mut headers = Vec::with_capacity(4);
 
         let mut buf = vec![0; 8];
@@ -130,7 +130,7 @@ impl AppWithSafeRetry {
             attempts: 1,
             limit: limit,
             request: Arc::new(request),
-            txs: txs,
+            dispatcher: dispatcher,
             headers: headers,
             current: None,
         };
@@ -176,9 +176,7 @@ impl AppWithSafeRetry {
             }
         };
 
-        let x = rand::random::<usize>();
-        let rolled = x % self.txs.len();
-        self.txs[rolled].send(ev).unwrap();
+        self.dispatcher.send(ev);
 
         let future = rx.map_err(|err| {
             hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err)))
@@ -223,16 +221,16 @@ impl Future for AppWithSafeRetry {
 }
 
 pub struct AppRoute {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
+    dispatcher: EventDispatcher,
     trace_header: String,
     log: Logger,
 }
 
 impl AppRoute {
     // TODO: Make `tracing_header` optional. Use builder.
-    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, trace_header: String, log: Logger) -> Self {
+    pub fn new(dispatcher: EventDispatcher, trace_header: String, log: Logger) -> Self {
         Self {
-            txs: txs,
+            dispatcher: dispatcher,
             trace_header: trace_header,
             log: log,
         }
@@ -266,7 +264,7 @@ impl Route for AppRoute {
 
                 let log = AccessLogger::new(self.log.clone(), req);
                 // TODO: Collect body first of all.
-                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.txs.clone(), 3)
+                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.dispatcher.clone(), 3)
                     .and_then(move |(mut res, bytes_sent)| {
                         res.headers_mut().set_raw("X-Powered-By", "Cocaine");
                         log.commit(trace, res.status().into(), bytes_sent);

@@ -3,6 +3,7 @@ use std::cmp;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::iter;
+use std::mem;
 use std::time::{Duration, SystemTime};
 
 use futures::{Async, Future, Poll, Stream};
@@ -19,7 +20,6 @@ use cocaine::service::unicorn::{Close, Unicorn, Version};
 
 use config::{Config, PoolConfig, ServicePoolConfig};
 
-// TODO: Should not be public.
 pub enum Event {
     Service {
         name: String,
@@ -29,6 +29,36 @@ pub enum Event {
     OnRoutingUpdates(HashMap<String, HashRing>),
     OnTracingUpdates(HashMap<String, f64>),
     OnTimeoutUpdates(HashMap<String, f64>),
+}
+
+#[derive(Clone)]
+pub struct EventDispatcher {
+    senders: Vec<UnboundedSender<Event>>,
+}
+
+impl EventDispatcher {
+    pub fn new(senders: Vec<UnboundedSender<Event>>) -> Self {
+        Self { senders: senders }
+    }
+
+    pub fn send(&self, event: Event) {
+        let rand = rand::random::<usize>();
+        let roll = rand % self.senders.len();
+        mem::drop(self.senders[roll].send(event));
+    }
+
+    pub fn send_all<F>(&self, f: F)
+        where F: Fn() -> Event
+    {
+        for sender in &self.senders {
+            mem::drop(sender.send(f()));
+        }
+    }
+
+    /// Destructs this dispatcher, yielding underlying senders.
+    pub fn into_senders(self) -> Vec<UnboundedSender<Event>> {
+        self.senders
+    }
 }
 
 struct WatchedService {
@@ -303,7 +333,7 @@ enum RoutingState<T> {
 pub struct RoutingGroupsUpdateTask<T> {
     handle: Handle,
     locator: Locator,
-    txs: Vec<UnboundedSender<Event>>,
+    dispatcher: EventDispatcher,
     log: Logger,
     /// Current state.
     state: Option<RoutingState<T>>,
@@ -315,14 +345,15 @@ pub struct RoutingGroupsUpdateTask<T> {
 }
 
 impl RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
-    pub fn new(handle: Handle, locator: Locator, txs: Vec<UnboundedSender<Event>>, log: Logger) -> Self {
+    ///
+    pub fn new(handle: Handle, locator: Locator, dispatcher: EventDispatcher, log: Logger) -> Self {
         let uuid = Uuid::new_v4().hyphenated().to_string();
         let stream = locator.routing(&uuid);
 
         Self {
             handle: handle,
             locator: locator,
-            txs: txs,
+            dispatcher: dispatcher,
             log: log,
             state: Some(RoutingState::Fetch((uuid, stream.boxed()))),
             attempts: 0,
@@ -358,13 +389,10 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing
                 loop {
                     match stream.poll() {
                         Ok(Async::Ready(Some(groups))) => {
-                            self.attempts = 0;
-
                             cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
-                            for tx in &self.txs {
-                                tx.send(Event::OnRoutingUpdates(groups.clone()))
-                                    .expect("channel is bound to itself and lives forever");
-                            }
+
+                            self.attempts = 0;
+                            self.dispatcher.send_all(|| Event::OnRoutingUpdates(groups.clone()));
                         }
                         Ok(Async::NotReady) => {
                             break;

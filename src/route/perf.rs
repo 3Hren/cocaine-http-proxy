@@ -4,10 +4,8 @@
 
 use std::io::{self, ErrorKind};
 
-use rand;
-
 use futures::Future;
-use futures::sync::{oneshot, mpsc};
+use futures::sync::oneshot;
 
 use hyper::{self, StatusCode};
 use hyper::header::ContentLength;
@@ -19,18 +17,18 @@ use cocaine::{Dispatch, Error, Service};
 use cocaine::logging::Logger;
 
 use logging::AccessLogger;
-use pool::Event;
+use pool::{Event, EventDispatcher};
 use route::Route;
 
 pub struct PerfRoute {
-    txs: Vec<mpsc::UnboundedSender<Event>>,
+    dispatcher: EventDispatcher,
     log: Logger,
 }
 
 impl PerfRoute {
-    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, log: Logger) -> Self {
+    pub fn new(dispatcher: EventDispatcher, log: Logger) -> Self {
         Self {
-            txs: txs,
+            dispatcher: dispatcher,
             log: log,
         }
     }
@@ -54,14 +52,12 @@ impl Route for PerfRoute {
             },
         };
 
-        let x = rand::random::<usize>();
-        let rolled = x % self.txs.len();
-        self.txs[rolled].send(ev).unwrap();
+        self.dispatcher.send(ev);
 
         let log = AccessLogger::new(self.log.clone(), req);
         let future = rx.and_then(move |(mut res, bytes_sent)| {
             res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(x as u64, res.status().into(), bytes_sent);
+            log.commit(0, res.status().into(), bytes_sent);
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
