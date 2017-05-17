@@ -6,6 +6,9 @@ use futures::{future, Future};
 use hyper::{self, StatusCode};
 use hyper::server::{Response, Request};
 
+pub use self::app::AppRoute;
+pub use self::perf::PerfRoute;
+
 pub mod app;
 pub mod perf;
 
@@ -27,7 +30,7 @@ pub type HyperRoute = Arc<Route<Future = Box<Future<Item = Response, Error = hyp
 
 #[derive(Clone)]
 pub struct Router {
-    routes: Vec<HyperRoute>
+    routes: Vec<HyperRoute>,
 }
 
 impl Router {

@@ -72,10 +72,8 @@ use cocaine::service::{Locator, Unicorn};
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
-use self::pool::{SubscribeTask, Event, EventDispatcher, RoutingGroupsUpdateTask};
-use self::route::Router;
-use self::route::app::AppRoute;
-use self::route::perf::PerfRoute;
+use self::pool::{SubscribeTask, Event, EventDispatch, RoutingGroupsUpdateTask};
+use self::route::{AppRoute, PerfRoute, Router};
 use self::server::{ServerConfig, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
@@ -148,14 +146,13 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         .take(config.threads())
         .unzip();
 
-    let disp = EventDispatcher::new(txs);
+    let dispatch = EventDispatch::new(txs);
 
-//    let join = run_periodic(config.clone(), logging.common().clone(), dispatcher.clone());
     // Start all periodic jobs in a separate thread that will produce control events for pools.
     let thread: JoinHandle<Result<(), io::Error>> = {
         let cfg = config.clone();
         let log = logging.common().clone();
-        let disp = disp.clone();
+        let dispatch = dispatch.clone();
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
             let locator = ServiceBuilder::new("locator")
@@ -165,10 +162,10 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
-            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), disp.clone(), log.clone());
+            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), dispatch.clone(), log.clone());
             let tracing = {
                 let log = log.clone();
-                let disp = disp.clone();
+                let dispatch = dispatch.clone();
 
                 SubscribeTask::new(
                     cfg.tracing().path().into(),
@@ -177,7 +174,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                     core.handle(),
                     move |tracing| {
                         cocaine_log!(log, Severity::Info, "updated tracing config with {} entries", tracing.len());
-                        disp.send_all(|| Event::OnTracingUpdates(tracing.clone()));
+                        dispatch.send_all(|| Event::OnTracingUpdates(tracing.clone()));
                     }
                 )
             };
@@ -188,11 +185,11 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     };
 
     let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(disp.clone(), config.tracing().header().into(), logging.access().clone())));
-    router.add(Arc::new(PerfRoute::new(disp.clone(), logging.access().clone())));
+    router.add(Arc::new(AppRoute::new(dispatch.clone(), config.tracing().header().into(), logging.access().clone())));
+    router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
 
     let factory = Arc::new(ProxyServiceFactoryFactory::new(
-        disp.into_senders(),
+        dispatch.into_senders(),
         rxs,
         logging.common().clone(),
         metrics.clone(),

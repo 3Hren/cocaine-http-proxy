@@ -91,10 +91,3 @@ pool:
   services:
     echo:
       limit: 4
-
-# Pluggable routes for the main server. Can be "app", "perf", "jsonrpc".
-# !Not implemented yet!
-routes:
-  - app
-  - perf
-  - jsonrpc

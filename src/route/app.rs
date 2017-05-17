@@ -23,7 +23,7 @@ use cocaine::logging::Logger;
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
-use pool::{Event, EventDispatcher};
+use pool::{Event, EventDispatch};
 use route::Route;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
@@ -109,13 +109,13 @@ struct AppWithSafeRetry {
     attempts: u32,
     limit: u32,
     request: Arc<AppRequest>,
-    dispatcher: EventDispatcher,
+    dispatcher: EventDispatch,
     headers: Vec<hpack::Header>,
     current: Option<BoxFuture<Option<(Response, u64)>, hyper::Error>>,
 }
 
 impl AppWithSafeRetry {
-    fn new(request: AppRequest, dispatcher: EventDispatcher, limit: u32) -> Self {
+    fn new(request: AppRequest, dispatcher: EventDispatch, limit: u32) -> Self {
         let mut headers = Vec::with_capacity(4);
 
         let mut buf = vec![0; 8];
@@ -221,14 +221,14 @@ impl Future for AppWithSafeRetry {
 }
 
 pub struct AppRoute {
-    dispatcher: EventDispatcher,
+    dispatcher: EventDispatch,
     trace_header: String,
     log: Logger,
 }
 
 impl AppRoute {
     // TODO: Make `tracing_header` optional. Use builder.
-    pub fn new(dispatcher: EventDispatcher, trace_header: String, log: Logger) -> Self {
+    pub fn new(dispatcher: EventDispatch, trace_header: String, log: Logger) -> Self {
         Self {
             dispatcher: dispatcher,
             trace_header: trace_header,

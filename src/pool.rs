@@ -32,11 +32,11 @@ pub enum Event {
 }
 
 #[derive(Clone)]
-pub struct EventDispatcher {
+pub struct EventDispatch {
     senders: Vec<UnboundedSender<Event>>,
 }
 
-impl EventDispatcher {
+impl EventDispatch {
     pub fn new(senders: Vec<UnboundedSender<Event>>) -> Self {
         Self { senders: senders }
     }
@@ -333,7 +333,7 @@ enum RoutingState<T> {
 pub struct RoutingGroupsUpdateTask<T> {
     handle: Handle,
     locator: Locator,
-    dispatcher: EventDispatcher,
+    dispatcher: EventDispatch,
     log: Logger,
     /// Current state.
     state: Option<RoutingState<T>>,
@@ -346,7 +346,7 @@ pub struct RoutingGroupsUpdateTask<T> {
 
 impl RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
     ///
-    pub fn new(handle: Handle, locator: Locator, dispatcher: EventDispatcher, log: Logger) -> Self {
+    pub fn new(handle: Handle, locator: Locator, dispatcher: EventDispatch, log: Logger) -> Self {
         let uuid = Uuid::new_v4().hyphenated().to_string();
         let stream = locator.routing(&uuid);
 

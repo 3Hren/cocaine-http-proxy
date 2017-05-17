@@ -17,16 +17,16 @@ use cocaine::{Dispatch, Error, Service};
 use cocaine::logging::Logger;
 
 use logging::AccessLogger;
-use pool::{Event, EventDispatcher};
+use pool::{Event, EventDispatch};
 use route::Route;
 
 pub struct PerfRoute {
-    dispatcher: EventDispatcher,
+    dispatcher: EventDispatch,
     log: Logger,
 }
 
 impl PerfRoute {
-    pub fn new(dispatcher: EventDispatcher, log: Logger) -> Self {
+    pub fn new(dispatcher: EventDispatch, log: Logger) -> Self {
         Self {
             dispatcher: dispatcher,
             log: log,
