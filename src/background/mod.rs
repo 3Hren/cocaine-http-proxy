@@ -24,7 +24,9 @@ enum State<F> {
     Retry(Timeout),
 }
 
-pub trait FutureFactory {
+/// An action can be run multiple times and produces a future.
+pub trait Action {
+    /// The future that this action produces.
     type Item: Future;
 
     /// Constructs a new future.
@@ -33,14 +35,11 @@ pub trait FutureFactory {
     fn create(&mut self) -> Self::Item;
 }
 
-impl<F, T> FutureFactory for F
-    where F: FnMut() -> T,
-          T: Future
-{
-    type Item = T;
+impl<T: IntoFuture, F: FnMut() -> T> Action for F {
+    type Item = T::Item;
 
     fn create(&mut self) -> Self::Item {
-        (*self)()
+        self().into_future()
     }
 }
 
@@ -59,7 +58,7 @@ pub struct ExponentialBackOff<T, F> {
 }
 
 impl<T, F, R> ExponentialBackOff<T, F>
-    where T: FutureFactory<Item=F>,
+    where T: Action<Item=F>,
           F: Future<Item=RepeatResult<R>, Error=()>
 {
     pub fn new(mut factory: T, handle: Handle) -> Self {
@@ -92,7 +91,7 @@ impl<T, F, R> ExponentialBackOff<T, F>
 }
 
 impl<T, F, R> Future for ExponentialBackOff<T, F>
-    where T: FutureFactory<Item=F>,
+    where T: Action<Item=F>,
           F: Future<Item=RepeatResult<R>, Error=()>
 {
     type Item = R;
