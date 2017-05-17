@@ -1,3 +1,7 @@
+//! Utilities for the proxy.
+//!
+//! Currently contains a simple dashboard for checking whether the proxy is able to work properly.
+
 use std::iter;
 use std::net::SocketAddr;
 use std::result::Result;

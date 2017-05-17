@@ -13,9 +13,9 @@
 //! - [x] headers in the framework.
 //! - [x] tracing.
 //! - [x] retry policy for applications.
+//! - [x] request timeouts.
 //! - [ ] timeouts.
 //! - [ ] forward Authorization header.
-//! - [x] request timeouts.
 //! - [ ] chunked transfer encoding.
 //! - [ ] clean code.
 //! - [ ] metrics: histograms.
