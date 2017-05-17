@@ -15,7 +15,7 @@
 //! - [x] retry policy for applications.
 //! - [ ] timeouts.
 //! - [ ] forward Authorization header.
-//! - [ ] request timeouts.
+//! - [x] request timeouts.
 //! - [ ] chunked transfer encoding.
 //! - [ ] clean code.
 //! - [ ] metrics: histograms.

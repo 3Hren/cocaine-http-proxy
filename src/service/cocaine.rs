@@ -1,14 +1,15 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::vec::IntoIter;
 
-use futures::Future;
+use futures::{future, Future};
 use futures::sync::mpsc;
-use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Handle, Timeout};
 use tokio_service::Service;
 
-use hyper;
+use hyper::{self, StatusCode};
 use hyper::server::{Request, Response};
 
 use cocaine::logging::{Severity, Logger};
@@ -51,8 +52,65 @@ impl Drop for ProxyService {
     }
 }
 
+pub struct TimedOut;
+
+impl From<TimedOut> for Response {
+    fn from(timeout: TimedOut) -> Self {
+        match timeout {
+            TimedOut => {
+                Response::new()
+                    .with_status(StatusCode::InternalServerError)
+                    .with_body("Timed out while waiting for response from the Cocaine")
+            }
+        }
+    }
+}
+
+pub struct TimeoutMiddleware<T> {
+    upstream: T,
+    timeout: Duration,
+    handle: Handle,
+}
+
+impl<T> TimeoutMiddleware<T> {
+    fn new(upstream: T, timeout: Duration, handle: Handle) -> Self {
+        Self {
+            upstream: upstream,
+            timeout: timeout,
+            handle: handle,
+        }
+    }
+}
+
+impl<T> Service for TimeoutMiddleware<T>
+    where T: Service,
+          T::Response: From<TimedOut>,
+          T::Error: From<io::Error> + 'static,
+          T::Future: 'static
+{
+    type Request  = T::Request;
+    type Response = T::Response;
+    type Error    = T::Error;
+    type Future   = Box<Future<Item = Self::Response, Error = Self::Error>>;
+
+    fn call(&self, req: Self::Request) -> Self::Future {
+        let timeout = future::result(Timeout::new(self.timeout, &self.handle))
+            .flatten()
+            .map(|()| Self::Response::from(TimedOut))
+            .map_err(From::from);
+
+        let future = self.upstream.call(req)
+            .select(timeout)
+            .map(|v| v.0)
+            .map_err(|e| e.0);
+
+        Box::new(future)
+    }
+}
+
 #[derive(Clone)]
 pub struct ProxyServiceFactory {
+    handle: Handle,
     log: Logger,
     metrics: Arc<Metrics>,
     router: Router,
@@ -61,7 +119,7 @@ pub struct ProxyServiceFactory {
 impl ServiceFactory for ProxyServiceFactory {
     type Request  = Request;
     type Response = Response;
-    type Instance = ProxyService;
+    type Instance = TimeoutMiddleware<ProxyService>;
     type Error    = hyper::Error;
 
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
@@ -80,7 +138,9 @@ impl ServiceFactory for ProxyServiceFactory {
             router: self.router.clone(),
         };
 
-        Ok(service)
+        let wrapped = TimeoutMiddleware::new(service, Duration::new(5, 0), self.handle.clone());
+
+        Ok(wrapped)
     }
 }
 
@@ -120,6 +180,7 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
 
         handle.spawn(pool);
         ProxyServiceFactory {
+            handle: handle.clone(),
             log: self.log.clone(),
             metrics: self.metrics.clone(),
             router: self.router.clone(),
