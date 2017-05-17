@@ -188,14 +188,14 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     router.add(Arc::new(AppRoute::new(dispatch.clone(), config.tracing().header().into(), logging.access().clone())));
     router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
 
-    let factory = Arc::new(ProxyServiceFactoryFactory::new(
+    let factory = ProxyServiceFactoryFactory::new(
         dispatch.into_senders(),
         rxs,
         logging.common().clone(),
         metrics.clone(),
         router,
         config.clone()
-    ));
+    );
 
     let proxy_cfg = ServerConfig::new(config.network().addr())
         .backlog(config.network().backlog())
