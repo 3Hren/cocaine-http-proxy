@@ -77,7 +77,7 @@ timeouts:
 pool:
   # Default pool limit for services.
   limit: 5
-  # Default service life span in seconds after which it will be a candidate
+  # Default service life span in seconds after which it will become a candidate
   # for reconnection.
   lifespan: 60
   # Fraction of a pool that can be in reconnection state simultaneously. Must
