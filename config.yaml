@@ -64,8 +64,7 @@ tracing:
 
 # Response timeout in seconds after which it will be canceled and the server
 # responds with 504 HTTP status code.
-# !Not implemented yet!
-timeout: 30.0
+timeout: 30
 
 # Fine-grained service timeouts settings.
 timeouts:

@@ -22,10 +22,10 @@ use route::Router;
 use service::{ServiceFactory, ServiceFactorySpawn};
 
 pub struct ProxyService {
-    log: Logger,
-    metrics: Arc<Metrics>,
     addr: Option<SocketAddr>,
     router: Router,
+    metrics: Arc<Metrics>,
+    log: Logger,
 }
 
 impl Service for ProxyService {
@@ -59,7 +59,7 @@ impl From<TimedOut> for Response {
         match timeout {
             TimedOut => {
                 Response::new()
-                    .with_status(StatusCode::InternalServerError)
+                    .with_status(StatusCode::GatewayTimeout)
                     .with_body("Timed out while waiting for response from the Cocaine")
             }
         }
@@ -110,10 +110,11 @@ impl<T> Service for TimeoutMiddleware<T>
 
 #[derive(Clone)]
 pub struct ProxyServiceFactory {
-    handle: Handle,
-    log: Logger,
-    metrics: Arc<Metrics>,
     router: Router,
+    timeout: Duration,
+    handle: Handle,
+    metrics: Arc<Metrics>,
+    log: Logger,
 }
 
 impl ServiceFactory for ProxyServiceFactory {
@@ -125,6 +126,7 @@ impl ServiceFactory for ProxyServiceFactory {
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
         self.metrics.connections.active.add(1);
         self.metrics.connections.accepted.add(1);
+
         if let Some(addr) = addr {
             cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr);
         } else {
@@ -132,13 +134,13 @@ impl ServiceFactory for ProxyServiceFactory {
         }
 
         let service = ProxyService {
-            log: self.log.clone(),
-            metrics: self.metrics.clone(),
             addr: addr,
             router: self.router.clone(),
+            metrics: self.metrics.clone(),
+            log: self.log.clone(),
         };
 
-        let wrapped = TimeoutMiddleware::new(service, Duration::new(5, 0), self.handle.clone());
+        let wrapped = TimeoutMiddleware::new(service, self.timeout, self.handle.clone());
 
         Ok(wrapped)
     }
@@ -147,21 +149,27 @@ impl ServiceFactory for ProxyServiceFactory {
 pub struct ProxyServiceFactoryFactory {
     tx: Mutex<IntoIter<mpsc::UnboundedSender<Event>>>,
     rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
-    log: Logger,
-    metrics: Arc<Metrics>,
-    router: Router,
     cfg: Config,
+    router: Router,
+    metrics: Arc<Metrics>,
+    log: Logger,
 }
 
 impl ProxyServiceFactoryFactory {
-    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>, rxs: Vec<mpsc::UnboundedReceiver<Event>>, log: Logger, metrics: Arc<Metrics>, router: Router, cfg: Config) -> Self {
+    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>,
+               rxs: Vec<mpsc::UnboundedReceiver<Event>>,
+               cfg: Config,
+               router: Router,
+               metrics: Arc<Metrics>,
+               log: Logger) -> Self
+    {
         Self {
             tx: Mutex::new(txs.clone().into_iter()),
             rx: Mutex::new(rxs.into_iter()),
-            log: log,
-            metrics: metrics,
-            router: router,
             cfg: cfg,
+            router: router,
+            metrics: metrics,
+            log: log,
         }
     }
 }
@@ -180,10 +188,11 @@ impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
 
         handle.spawn(pool);
         ProxyServiceFactory {
-            handle: handle.clone(),
-            log: self.log.clone(),
-            metrics: self.metrics.clone(),
             router: self.router.clone(),
+            timeout: self.cfg.timeout(),
+            handle: handle.clone(),
+            metrics: self.metrics.clone(),
+            log: self.log.clone(),
         }
     }
 }

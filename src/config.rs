@@ -6,6 +6,7 @@ use std::fs::File;
 use std::path::Path;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use std::time::Duration;
 
 use num_cpus;
 use serde::Serializer;
@@ -193,6 +194,7 @@ pub struct Config {
     monitoring: MonitoringConfig,
     pool: PoolConfig,
     tracing: TracingConfig,
+    timeout: u64,
     timeouts: TimeoutsConfig,
 }
 
@@ -253,6 +255,11 @@ impl Config {
 
     pub fn tracing(&self) -> &TracingConfig {
         &self.tracing
+    }
+
+    /// Returns proxy timeout.
+    pub fn timeout(&self) -> Duration {
+        Duration::new(self.timeout, 0)
     }
 
     pub fn timeouts(&self) -> &TimeoutsConfig {

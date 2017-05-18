@@ -228,10 +228,10 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let factory = ProxyServiceFactoryFactory::new(
         dispatch.into_senders(),
         rxs,
-        logging.common().clone(),
-        metrics.clone(),
+        config.clone(),
         router,
-        config.clone()
+        metrics.clone(),
+        logging.common().clone(),
     );
 
     let proxy_cfg = ServerConfig::new(config.network().addr())
