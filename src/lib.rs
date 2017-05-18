@@ -91,7 +91,7 @@ mod server;
 mod service;
 pub mod util;
 
-const LOCATOR_NAME: &str = "locator";
+const DEFAULT_LOCATOR_NAME: &str = "locator";
 const THREAD_NAME_PERIODIC: &str = "periodic";
 
 type ServiceBuilder<T> = Builder<T>;
@@ -161,7 +161,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
 
-            let locator = ServiceBuilder::new(LOCATOR_NAME)
+            let locator = ServiceBuilder::new(DEFAULT_LOCATOR_NAME)
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
 
@@ -169,9 +169,12 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
-            let action = RoutingGroupsAction::new(Locator::new(locator), dispatch.clone(), log.clone());
-            let policy = |v| Duration::from_secs(2u64.pow(std::cmp::min(6, v)));
-            let groups = Retry::new(action, (0..).map(&policy), core.handle());
+            let exponential_backoff = |v| Duration::from_secs(2u64.pow(std::cmp::min(6, v)));
+
+            let groups = {
+                let action = RoutingGroupsAction::new(Locator::new(locator), dispatch.clone(), log.clone());
+                Retry::new(action, (0..).map(&exponential_backoff), core.handle())
+            };
 
             let on_tracing = {
                 let log = log.clone();
@@ -189,7 +192,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                     &on_tracing,
                     log.clone()
                 );
-                Retry::new(action, (0..).map(&policy), core.handle())
+                Retry::new(action, (0..).map(&exponential_backoff), core.handle())
             };
 
             let on_timeouts = {
@@ -208,7 +211,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                     &on_timeouts,
                     log.clone()
                 );
-                Retry::new(action, (0..).map(&policy), core.handle())
+                Retry::new(action, (0..).map(&exponential_backoff), core.handle())
             };
 
             core.run(groups.join3(tracing, timeouts))
