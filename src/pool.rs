@@ -435,7 +435,7 @@ impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing
     }
 }
 
-type SubscribeStream = Box<Stream<Item=(HashMap<String, f64>, Version), Error=Error> + Send>;
+type SubscribeStream = Box<Stream<Item=(Option<HashMap<String, f64>>, Version), Error=Error> + Send>;
 
 enum SubscribeState {
     Start(Box<Future<Item=(Close, SubscribeStream), Error=Error>>),
@@ -536,7 +536,7 @@ impl<F> Future for SubscribeTask<F>
                             self.attempts = 0;
                             cocaine_log!(self.log, Severity::Debug, "received subscription update: {:?}, version {}", value, version);
 
-                            (self.callback)(value);
+                            (self.callback)(value.unwrap_or_default());
                         }
                         Ok(Async::NotReady) => {
                             break;
