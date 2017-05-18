@@ -1,7 +1,6 @@
 use std::boxed::FnBox;
 use std::cmp;
 use std::collections::{HashMap, VecDeque};
-use std::io;
 use std::iter;
 use std::mem;
 use std::time::{Duration, SystemTime};
@@ -9,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use rand;
-use tokio_core::reactor::{Handle, Timeout};
+use tokio_core::reactor::Handle;
 use uuid::Uuid;
 
 use cocaine::{Error, Service};
@@ -402,72 +401,67 @@ type SubscribeStream = Box<Stream<Item=(Option<HashMap<String, f64>>, Version), 
 enum SubscribeState {
     Start(Box<Future<Item=(Close, SubscribeStream), Error=Error>>),
     Fetch(SubscribeStream),
-    Retry(Timeout),
 }
 
 pub struct SubscribeTask<F> {
     /// Path subscribed on.
     path: String,
-    /// Unicorn service.
-    unicorn: Unicorn,
-    /// Logger service.
-    log: Logger,
-    /// I/O loop handle.
-    handle: Handle,
     /// Current state.
     state: Option<SubscribeState>,
-    /// Number of unsuccessful fetching attempts.
-    attempts: u32,
-    /// Maximum timeout value. Actual timeout is calculated using `2 ** attempts` formula, but is
-    /// truncated to this value if oversaturated.
-    timeout_limit: Duration,
     /// Close handle to be able to notify the Unicorn that we no longer needed for updates.
     close: Option<Close>,
     callback: F,
+    /// Logger service.
+    log: Logger,
 }
 
-impl<F> SubscribeTask<F>
-    where F: Fn(HashMap<String, f64>)
-{
-    pub fn new(path: String, unicorn: Unicorn, log: Logger, handle: Handle, callback: F) -> Self {
-        let future = Box::new(unicorn.subscribe(path.clone()));
+pub struct SubscribeAction<F> {
+    /// Path subscribed on.
+    path: String,
+    /// Unicorn service.
+    unicorn: Unicorn,
+    /// Callback.
+    callback: F,
+    /// Logger service.
+    log: Logger,
+}
 
+impl<F> SubscribeAction<F>
+    where F: Fn(HashMap<String, f64>) + Clone
+{
+    pub fn new(path: String, unicorn: Unicorn, callback: F, log: Logger) -> Self {
         Self {
             path: path,
             unicorn: unicorn,
-            log: log,
-            handle: handle,
-            state: Some(SubscribeState::Start(future)),
-            attempts: 0,
-            timeout_limit: Duration::new(32, 0),
-            close: None,
             callback: callback,
+            log: log,
         }
     }
+}
 
-    fn next_timeout(&self) -> Duration {
-        // Hope that 2**18 seconds, which is ~3 days, fits everyone needs.
-        let exp = cmp::min(self.attempts, 18);
-        let duration = Duration::new(2u64.pow(exp), 0);
+impl<F> Action for SubscribeAction<F>
+    where F: Fn(HashMap<String, f64>) + Clone
+{
+    type Future = SubscribeTask<F>;
 
-        cmp::min(duration, self.timeout_limit)
-    }
+    fn run(&mut self) -> Self::Future {
+        let future = Box::new(self.unicorn.subscribe(self.path.clone()));
 
-    fn retry_later(&mut self) -> Poll<(), io::Error> {
-        let timeout = self.next_timeout();
-        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", timeout.as_secs());
-
-        self.state = Some(SubscribeState::Retry(Timeout::new(timeout, &self.handle)?));
-        self.attempts += 1;
-        return self.poll();
+        SubscribeTask {
+            path: self.path.clone(),
+            state: Some(SubscribeState::Start(future.boxed())),
+            close: None,
+            callback: self.callback.clone(),
+            log: self.log.clone(),
+        }
     }
 }
 
 impl<F> Future for SubscribeTask<F>
     where F: Fn(HashMap<String, f64>)
 {
-    type Item = ();
-    type Error = io::Error;
+    type Item = RepeatResult<()>;
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.state.take().unwrap() {
@@ -487,7 +481,7 @@ impl<F> Future for SubscribeTask<F>
                         cocaine_log!(self.log, Severity::Warn, "failed to subscribe: {}", err; {
                             path: self.path,
                         });
-                        return self.retry_later();
+                        return Err(err);
                     }
                 }
             }
@@ -495,41 +489,26 @@ impl<F> Future for SubscribeTask<F>
                 loop {
                     match stream.poll() {
                         Ok(Async::Ready(Some((value, version)))) => {
-                            self.attempts = 0;
+                            let value = value.unwrap_or_default();
                             cocaine_log!(self.log, Severity::Debug, "received subscription update: {:?}, version {}", value, version);
 
-                            (self.callback)(value.unwrap_or_default());
+                            (self.callback)(value);
                         }
                         Ok(Async::NotReady) => {
                             break;
                         }
                         Ok(Async::Ready(None)) => {
-                            return self.retry_later();
+                            return Ok(Async::Ready(RepeatResult::Repeat(())));
                         }
                         Err(err) => {
                             cocaine_log!(self.log, Severity::Warn, "failed to fetch subscriptions: {}", err; {
                                 path: self.path,
                             });
-                            return self.retry_later();
+                            return Err(err);
                         }
                     }
                 }
                 self.state = Some(SubscribeState::Fetch(stream));
-            }
-            SubscribeState::Retry(mut timeout) => {
-                match timeout.poll() {
-                    Ok(Async::Ready(())) => {
-                        cocaine_log!(self.log, Severity::Debug, "timed out, trying to subscribe ...");
-
-                        let future = self.unicorn.subscribe(self.path.clone()).boxed();
-                        self.state = Some(SubscribeState::Start(future));
-                        return self.poll();
-                    }
-                    Ok(Async::NotReady) => {
-                        self.state = Some(SubscribeState::Retry(timeout));
-                    }
-                    Err(..) => return self.retry_later(),
-                }
             }
         }
 

@@ -173,6 +173,17 @@ impl TracingConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TimeoutsConfig {
+    path: String,
+}
+
+impl TimeoutsConfig {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     network: NetworkConfig,
     threads: Option<usize>,
@@ -182,6 +193,7 @@ pub struct Config {
     monitoring: MonitoringConfig,
     pool: PoolConfig,
     tracing: TracingConfig,
+    timeouts: TimeoutsConfig,
 }
 
 impl Config {
@@ -241,5 +253,9 @@ impl Config {
 
     pub fn tracing(&self) -> &TracingConfig {
         &self.tracing
+    }
+
+    pub fn timeouts(&self) -> &TimeoutsConfig {
+        &self.timeouts
     }
 }

@@ -1,6 +1,8 @@
 //! Contains a `Retry` future wrapper that simplifies failed futures retrying using various
 //! policies.
 
+use std::error;
+use std::fmt::{self, Debug, Display, Formatter};
 use std::io;
 use std::iter::IntoIterator;
 use std::time::Duration;
@@ -21,6 +23,31 @@ pub enum Error<T, E> {
     Operation(Result<T, E>),
     /// Failed to create or activate the timer due to some I/O error.
     Timer(io::Error),
+}
+
+impl<T, E> Display for Error<T, E> {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            Error::Operation(..) => fmt.write_str("operation error"),
+            Error::Timer(ref err) => write!(fmt, "failed to initialize timer: {}", err),
+        }
+    }
+}
+
+impl<T: Debug, E: Debug> error::Error for Error<T, E> {
+    fn description(&self) -> &str {
+        match *self {
+            Error::Operation(..) => "operation failed",
+            Error::Timer(..) => "failed to initialize timer",
+        }
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            Error::Operation(..) => None,
+            Error::Timer(ref err) => Some(err),
+        }
+    }
 }
 
 /// A value that must be returned from the future that is wrapped with `Retry`.

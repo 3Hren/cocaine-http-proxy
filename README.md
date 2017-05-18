@@ -26,3 +26,6 @@ The proxy is aware of Google Dapper tracing mechanism. Each request is marked wi
 
 [rmp]: http://
 [cocaine-framework-rust]: http://
+
+#### Planning
+- [ ] Server back-pressure.

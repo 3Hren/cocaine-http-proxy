@@ -68,7 +68,6 @@ tracing:
 timeout: 30.0
 
 # Fine-grained service timeouts settings.
-# !Not implemented yet!
 timeouts:
   # Path to the Unicorn node, which contains timeouts settings.
   path: /timeouts

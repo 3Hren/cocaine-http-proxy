@@ -54,8 +54,9 @@ extern crate tokio_proto;
 extern crate tokio_service;
 extern crate uuid;
 
+use std::collections::HashMap;
 use std::error;
-use std::io;
+use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -73,7 +74,7 @@ use cocaine::service::{Locator, Unicorn};
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
-use self::pool::{SubscribeTask, Event, EventDispatch, RoutingGroupsAction};
+use self::pool::{Event, EventDispatch, RoutingGroupsAction, SubscribeAction};
 use self::retry::Retry;
 use self::route::{AppRoute, PerfRoute, Router};
 use self::server::{ServerConfig, ServerGroup};
@@ -90,6 +91,7 @@ mod server;
 mod service;
 pub mod util;
 
+const LOCATOR_NAME: &str = "locator";
 const THREAD_NAME_PERIODIC: &str = "periodic";
 
 type ServiceBuilder<T> = Builder<T>;
@@ -158,34 +160,59 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         let dispatch = dispatch.clone();
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
-            let locator = ServiceBuilder::new("locator1")
+
+            let locator = ServiceBuilder::new(LOCATOR_NAME)
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
+
             let unicorn = ServiceBuilder::new(cfg.unicorn().to_owned())
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
             let action = RoutingGroupsAction::new(Locator::new(locator), dispatch.clone(), log.clone());
             let policy = |v| Duration::from_secs(2u64.pow(std::cmp::min(6, v)));
-            let future = Retry::new(action, (0..).map(&policy), core.handle())
-                .then(|_| Ok(()));
+            let groups = Retry::new(action, (0..).map(&policy), core.handle());
 
-            let tracing = {
+            let on_tracing = {
                 let log = log.clone();
                 let dispatch = dispatch.clone();
+                move |tracing: HashMap<String, f64>| {
+                    cocaine_log!(log, Severity::Info, "updated tracing config with {} entries", tracing.len());
+                    dispatch.send_all(|| Event::OnTracingUpdates(tracing.clone()));
+                }
+            };
 
-                SubscribeTask::new(
+            let tracing = {
+                let action = SubscribeAction::new(
                     cfg.tracing().path().into(),
                     Unicorn::new(unicorn.clone()),
-                    log.clone(),
-                    core.handle(),
-                    move |tracing| {
-                        cocaine_log!(log, Severity::Info, "updated tracing config with {} entries", tracing.len());
-                        dispatch.send_all(|| Event::OnTracingUpdates(tracing.clone()));
-                    }
-                )
+                    &on_tracing,
+                    log.clone()
+                );
+                Retry::new(action, (0..).map(&policy), core.handle())
             };
-            core.run(future.join(tracing)).unwrap();
+
+            let on_timeouts = {
+                let log = log.clone();
+                let dispatch = dispatch.clone();
+                move |timeouts: HashMap<String, f64>| {
+                    cocaine_log!(log, Severity::Info, "updated timeout config with {} entries", timeouts.len());
+                    dispatch.send_all(|| Event::OnTimeoutUpdates(timeouts.clone()));
+                }
+            };
+
+            let timeouts = {
+                let action = SubscribeAction::new(
+                    cfg.timeouts().path().into(),
+                    Unicorn::new(unicorn.clone()),
+                    &on_timeouts,
+                    log.clone()
+                );
+                Retry::new(action, (0..).map(&policy), core.handle())
+            };
+
+            core.run(groups.join3(tracing, timeouts))
+                .map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))?;
 
             Ok(())
         })?
