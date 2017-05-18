@@ -59,6 +59,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use futures::Future;
 use futures::sync::mpsc;
@@ -72,7 +73,8 @@ use cocaine::service::{Locator, Unicorn};
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
-use self::pool::{SubscribeTask, Event, EventDispatch, RoutingGroupsUpdateTask};
+use self::pool::{SubscribeTask, Event, EventDispatch, RoutingGroupsAction};
+use self::retry::Retry;
 use self::route::{AppRoute, PerfRoute, Router};
 use self::server::{ServerConfig, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
@@ -82,6 +84,7 @@ mod config;
 mod logging;
 mod metrics;
 mod pool;
+mod retry;
 mod route;
 mod server;
 mod service;
@@ -155,14 +158,18 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         let dispatch = dispatch.clone();
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
-            let locator = ServiceBuilder::new("locator")
+            let locator = ServiceBuilder::new("locator1")
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
             let unicorn = ServiceBuilder::new(cfg.unicorn().to_owned())
                 .locator_addrs(locator_addrs)
                 .build(&core.handle());
 
-            let future = RoutingGroupsUpdateTask::new(core.handle(), Locator::new(locator), dispatch.clone(), log.clone());
+            let action = RoutingGroupsAction::new(Locator::new(locator), dispatch.clone(), log.clone());
+            let policy = |v| Duration::from_secs(2u64.pow(std::cmp::min(6, v)));
+            let future = Retry::new(action, (0..).map(&policy), core.handle())
+                .then(|_| Ok(()));
+
             let tracing = {
                 let log = log.clone();
                 let dispatch = dispatch.clone();

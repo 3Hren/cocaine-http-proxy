@@ -19,6 +19,7 @@ use cocaine::service::locator::HashRing;
 use cocaine::service::unicorn::{Close, Unicorn, Version};
 
 use config::{Config, PoolConfig, ServicePoolConfig};
+use retry::{Action, RepeatResult};
 
 pub enum Event {
     Service {
@@ -325,113 +326,74 @@ impl Future for PoolTask {
     }
 }
 
-enum RoutingState<T> {
-    Fetch((String, T)),
-    Retry(Timeout),
-}
-
-pub struct RoutingGroupsUpdateTask<T> {
-    handle: Handle,
+pub struct RoutingGroupsAction {
     locator: Locator,
     dispatcher: EventDispatch,
     log: Logger,
-    /// Current state.
-    state: Option<RoutingState<T>>,
-    /// Number of unsuccessful routing table fetching attempts.
-    attempts: u32,
-    /// Maximum timeout value. Actual timeout is calculated using `2 ** attempts` formula, but is
-    /// truncated to this value if oversaturated.
-    timeout_limit: Duration,
 }
 
-impl RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
-    ///
-    pub fn new(handle: Handle, locator: Locator, dispatcher: EventDispatch, log: Logger) -> Self {
-        let uuid = Uuid::new_v4().hyphenated().to_string();
-        let stream = locator.routing(&uuid);
-
+impl RoutingGroupsAction {
+    pub fn new(locator: Locator, dispatcher: EventDispatch, log: Logger) -> Self {
         Self {
-            handle: handle,
             locator: locator,
             dispatcher: dispatcher,
             log: log,
-            state: Some(RoutingState::Fetch((uuid, stream.boxed()))),
-            attempts: 0,
-            timeout_limit: Duration::new(32, 0),
         }
-    }
-
-    fn next_timeout(&self) -> Duration {
-        // Hope that 2**18 seconds, which is ~3 days, fits everyone needs.
-        let exp = cmp::min(self.attempts, 18);
-        let duration = Duration::new(2u64.pow(exp), 0);
-
-        cmp::min(duration, self.timeout_limit)
-    }
-
-    fn retry_later(&mut self) -> Poll<(), io::Error> {
-        let timeout = self.next_timeout();
-        cocaine_log!(self.log, Severity::Debug, "next timeout will fire in {}s", timeout.as_secs());
-
-        self.state = Some(RoutingState::Retry(Timeout::new(timeout, &self.handle)?));
-        self.attempts += 1;
-        return self.poll();
     }
 }
 
-impl Future for RoutingGroupsUpdateTask<Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>> {
-    type Item = ();
-    type Error = io::Error;
+impl Action for RoutingGroupsAction {
+    type Future = RoutingGroupsUpdateTask;
+
+    fn run(&mut self) -> Self::Future {
+        let uuid = Uuid::new_v4().hyphenated().to_string();
+        let stream = self.locator.routing(&uuid);
+
+        RoutingGroupsUpdateTask {
+            dispatcher: self.dispatcher.clone(),
+            log: self.log.clone(),
+            uuid: uuid,
+            stream: stream.boxed(),
+        }
+    }
+}
+
+pub struct RoutingGroupsUpdateTask {
+    dispatcher: EventDispatch,
+    log: Logger,
+    uuid: String,
+    stream: Box<Stream<Item=HashMap<String, HashRing>, Error=Error>>,
+}
+
+impl Future for RoutingGroupsUpdateTask {
+    type Item = RepeatResult<()>;
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.state.take().expect("state must be valid") {
-            RoutingState::Fetch((uuid, mut stream)) => {
-                loop {
-                    match stream.poll() {
-                        Ok(Async::Ready(Some(groups))) => {
-                            cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len());
+        loop {
+            match self.stream.poll() {
+                Ok(Async::Ready(Some(groups))) => {
+                    cocaine_log!(self.log, Severity::Info, "received {} RG(s) updates", groups.len(); {
+                        uuid: self.uuid,
+                    });
 
-                            self.attempts = 0;
-                            self.dispatcher.send_all(|| Event::OnRoutingUpdates(groups.clone()));
-                        }
-                        Ok(Async::NotReady) => {
-                            break;
-                        }
-                        Ok(Async::Ready(None)) => {
-                            cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription"; {
-                                uuid: uuid,
-                            });
-                            return self.retry_later();
-                        }
-                        Err(err) => {
-                            cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", err; {
-                                uuid: uuid,
-                            });
-                            return self.retry_later();
-                        }
-                    }
+                    self.dispatcher.send_all(|| Event::OnRoutingUpdates(groups.clone()));
                 }
-                self.state = Some(RoutingState::Fetch((uuid, stream)));
-            }
-            RoutingState::Retry(mut timeout) => {
-                match timeout.poll() {
-                    Ok(Async::Ready(())) => {
-                        cocaine_log!(self.log, Severity::Debug, "timed out, trying to subscribe routing ...");
-
-                        let uuid = Uuid::new_v4().hyphenated().to_string();
-                        let stream = self.locator.routing(&uuid);
-                        self.state = Some(RoutingState::Fetch((uuid, stream.boxed())));
-                        return self.poll();
-                    }
-                    Ok(Async::NotReady) => {
-                        self.state = Some(RoutingState::Retry(timeout));
-                    }
-                    Err(..) => unreachable!(),
+                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::Ready(None)) => {
+                    cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription"; {
+                        uuid: self.uuid,
+                    });
+                    return Ok(Async::Ready(RepeatResult::Repeat(())));
+                }
+                Err(err) => {
+                    cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", err; {
+                        uuid: self.uuid,
+                    });
+                    return Err(err);
                 }
             }
         }
-
-        Ok(Async::NotReady)
     }
 }
 
