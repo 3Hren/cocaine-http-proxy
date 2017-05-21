@@ -55,10 +55,8 @@ header! { (XJsonRpc, "X-Cocaine-JSON-RPC") => [i64] }
 
 enum ServerErrorCode {
     InvalidMethodFormat,
-    InvalidParamsFormat,
     /// Service has failed to provide its methods as like as to perform connection.
     ServiceNotConnected,
-    MethodNotFound,
     ProtocolViolation,
     Cocaine,
 }
@@ -67,10 +65,8 @@ impl Into<Error> for ServerErrorCode {
     fn into(self) -> Error {
         let (code, message, data) = match self {
             ServerErrorCode::InvalidMethodFormat => (-32000, "Invalid method format", None),
-            ServerErrorCode::InvalidParamsFormat => (-32001, "Invalid params format", None),
-            ServerErrorCode::ServiceNotConnected => (-32002, "Service is not connected", None),
-            ServerErrorCode::MethodNotFound => (-32003, "Method not found", None),
-            ServerErrorCode::ProtocolViolation => (-32004, "Protocol violation", None),
+            ServerErrorCode::ServiceNotConnected => (-32001, "Service is not connected", None),
+            ServerErrorCode::ProtocolViolation => (-32002, "Protocol violation", None),
             ServerErrorCode::Cocaine => (-32099, "Generic Cocaine error", None),
         };
 
@@ -200,7 +196,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                         }
                                     }
                                     Some(..) | None => {
-                                        let err = ServerErrorCode::InvalidParamsFormat.into();
+                                        let err = Error::new(ErrorCode::InvalidParams);
                                         let out = Output::from(Err(err), id, Some(Version::V2));
                                         return future::ok(Some(out)).boxed()
                                     }
@@ -343,8 +339,8 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                 }).boxed()
             }
         } else {
-            let err = ServerErrorCode::MethodNotFound;
-            let out = Output::from(Err(err.into()), id, Some(Version::V2));
+            let err = Error::new(ErrorCode::MethodNotFound);
+            let out = Output::from(Err(err), id, Some(Version::V2));
             mem::drop(tx.send(out));
             future::ok(()).boxed()
         }
