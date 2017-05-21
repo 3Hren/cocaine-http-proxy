@@ -23,6 +23,7 @@ use retry::{Action, RepeatResult};
 pub enum Event {
     Service {
         name: String,
+        // TODO: Better to provide something like `Settings`.
         func: Box<FnBox(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send>,
     },
     OnServiceConnect(Service),

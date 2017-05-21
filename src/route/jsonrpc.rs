@@ -24,6 +24,8 @@
 //! [jsonrpc]: http://www.jsonrpc.org/specification
 
 // TODO: There are `println's` which help debugging a lot. May be transform then into debug logs?
+// TODO: I can perform input sanity check by matching "chunks" with protocol to be sure that user reaches the terminate state.
+
 use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::mem;
