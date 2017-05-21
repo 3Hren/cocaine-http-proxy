@@ -283,7 +283,8 @@ impl Future for PoolTask {
                             let handle = self.handle.clone();
                             let ref service = self.select_service(name, &handle);
 
-                            handle.spawn(func.call_box((service, trace_bit)));
+                            let future = func.call_box((service, trace_bit));
+                            handle.spawn(future);
                         }
                         Event::OnServiceConnect(service) => {
                             match self.pool.get_mut(service.name()) {

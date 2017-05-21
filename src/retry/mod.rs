@@ -56,6 +56,7 @@ impl<T: Debug, E: Debug> error::Error for Error<T, E> {
 /// will not terminate the future, instead a new future will be created from the action as like as
 /// the retry policy reset and the computation will go on.
 pub enum RepeatResult<T> {
+    #[allow(unused)]
     Ok(T),
     Repeat(T),
 }

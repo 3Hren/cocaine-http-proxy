@@ -18,7 +18,7 @@ use cocaine::logging::Logger;
 
 use logging::AccessLogger;
 use pool::{Event, EventDispatch};
-use route::Route;
+use route::{Match, Route};
 
 pub struct PerfRoute {
     dispatcher: EventDispatch,
@@ -37,7 +37,7 @@ impl PerfRoute {
 impl Route for PerfRoute {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
-    fn process(&self, req: &Request) -> Option<Self::Future> {
+    fn process(&self, req: Request) -> Match<Self::Future> {
         let (tx, rx) = oneshot::channel();
 
         let ev = Event::Service {
@@ -54,18 +54,18 @@ impl Route for PerfRoute {
 
         self.dispatcher.send(ev);
 
-        let log = AccessLogger::new(self.log.clone(), req);
+        let log = AccessLogger::new(self.log.clone(), &req);
         let future = rx.and_then(move |(mut res, bytes_sent)| {
             res.headers_mut().set_raw("X-Powered-By", "Cocaine");
             log.commit(0, res.status().into(), bytes_sent);
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
-        Some(future.boxed())
+        Match::Some(future.boxed())
     }
 }
 
-struct SingleChunkReadDispatch {
+pub struct SingleChunkReadDispatch {
     tx: oneshot::Sender<(Response, u64)>,
 }
 

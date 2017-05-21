@@ -24,7 +24,7 @@ use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
 use pool::{Event, EventDispatch};
-use route::Route;
+use route::{Match, Route};
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
@@ -240,14 +240,12 @@ impl AppRoute {
 impl Route for AppRoute {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
-    fn process(&self, req: &Request) -> Option<Self::Future> {
-        let service = req.headers().get::<XCocaineService>();
-        let event = req.headers().get::<XCocaineEvent>();
+    fn process(&self, req: Request) -> Match<Self::Future> {
+        let service = req.headers().get::<XCocaineService>().map(|h| h.to_string());
+        let event = req.headers().get::<XCocaineEvent>().map(|h| h.to_string());
 
         match (service, event) {
             (Some(service), Some(event)) => {
-                let service = service.to_string();
-                let event = event.to_string();
                 let trace = if let Some(trace) = req.headers().get_raw(&self.trace_header) {
                     match XRequestId::parse_header(trace) {
                         Ok(v) => v.into(),
@@ -255,30 +253,30 @@ impl Route for AppRoute {
                             let res = Response::new()
                                 .with_status(StatusCode::BadRequest)
                                 .with_body(format!("Invalid `{}` header value", self.trace_header));
-                            return Some(future::ok(res).boxed());
+                            return Match::Some(future::ok(res).boxed());
                         }
                     }
                 } else {
                     rand::random::<u64>()
                 };
 
-                let log = AccessLogger::new(self.log.clone(), req);
+                let log = AccessLogger::new(self.log.clone(), &req);
                 // TODO: Collect body first of all.
-                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.dispatcher.clone(), 3)
+                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, &req), self.dispatcher.clone(), 3)
                     .and_then(move |(mut res, bytes_sent)| {
                         res.headers_mut().set_raw("X-Powered-By", "Cocaine");
                         log.commit(trace, res.status().into(), bytes_sent);
                         Ok(res)
                     });
-                Some(future.boxed())
+                Match::Some(future.boxed())
             }
             (Some(..), None) | (None, Some(..)) => {
                 let res = Response::new()
                     .with_status(StatusCode::BadRequest)
                     .with_body("Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
-                Some(future::ok(res).boxed())
+                Match::Some(future::ok(res).boxed())
             }
-            (None, None) => None,
+            (None, None) => Match::None(req),
         }
     }
 }

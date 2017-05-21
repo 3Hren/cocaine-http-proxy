@@ -14,12 +14,12 @@
 //! - [x] tracing.
 //! - [x] retry policy for applications.
 //! - [x] request timeouts.
+//! - [x] JSON RPC.
 //! - [ ] timeouts.
 //! - [ ] forward Authorization header.
 //! - [ ] chunked transfer encoding.
 //! - [ ] clean code.
 //! - [ ] metrics: histograms.
-//! - [ ] JSON RPC.
 //! - [ ] MDS direct.
 //! - [ ] Streaming logging through HTTP.
 //! - [ ] plugin system.
@@ -37,6 +37,7 @@ extern crate futures;
 #[macro_use]
 extern crate hyper;
 extern crate itertools;
+extern crate jsonrpc_core;
 extern crate log;
 extern crate net2;
 extern crate num_cpus;
@@ -76,7 +77,7 @@ pub use self::config::Config;
 use self::logging::{Loggers};
 use self::pool::{Event, EventDispatch, RoutingGroupsAction, SubscribeAction};
 use self::retry::Retry;
-use self::route::{AppRoute, PerfRoute, Router};
+use self::route::{AppRoute, JsonRpc, PerfRoute, Router};
 use self::server::{ServerConfig, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
@@ -86,7 +87,7 @@ mod logging;
 mod metrics;
 mod pool;
 mod retry;
-mod route;
+pub mod route;
 mod server;
 mod service;
 pub mod util;
@@ -223,6 +224,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
 
     let mut router = Router::new();
     router.add(Arc::new(AppRoute::new(dispatch.clone(), config.tracing().header().into(), logging.access().clone())));
+    router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().clone())));
     router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
 
     let factory = ProxyServiceFactoryFactory::new(

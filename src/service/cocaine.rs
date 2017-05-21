@@ -36,7 +36,7 @@ impl Service for ProxyService {
 
     fn call(&self, req: Request) -> Self::Future {
         self.metrics.requests.mark(1);
-        self.router.process(&req)
+        self.router.process(req)
     }
 }
 

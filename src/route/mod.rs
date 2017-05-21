@@ -7,10 +7,45 @@ use hyper::{self, StatusCode};
 use hyper::server::{Response, Request};
 
 pub use self::app::AppRoute;
+pub use self::jsonrpc::JsonRpc;
 pub use self::perf::PerfRoute;
 
-pub mod app;
-pub mod perf;
+mod app;
+mod jsonrpc;
+mod perf;
+
+#[derive(Debug)]
+pub enum Match<F> {
+    /// Successfully consumed a `Request`, yielding a `Future`.
+    Some(F),
+    /// The route has not match the request, returning it back.
+    None(Request),
+}
+
+impl<F> Match<F> {
+    /// Moves the value `v` out of the `Match<T>` if it is `Some(v)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the self value equals [`None`].
+    ///
+    /// [`None`]: #variant.None
+    #[inline]
+    pub fn unwrap(self) -> F {
+        match self {
+            Match::Some(val) => val,
+            Match::None(..) => panic!("called `Match::unwrap()` on a `None` value"),
+        }
+    }
+
+    #[inline]
+    pub fn is_none(&self) -> bool {
+        match *self {
+            Match::Some(..) => false,
+            Match::None(..) => true,
+        }
+    }
+}
 
 pub trait Route: Send + Sync {
     type Future: Future<Item = Response, Error = hyper::Error>;
@@ -23,7 +58,7 @@ pub trait Route: Send + Sync {
     /// Also it may decide to fail the request, because of incomplete prerequisites, for example if
     /// it detects all required headers, but fails to match the request method.
     /// At last a route can be neutral to the request, returning `None`.
-    fn process(&self, request: &Request) -> Option<Self::Future>;
+    fn process(&self, request: Request) -> Match<Self::Future>;
 }
 
 pub type HyperRoute = Arc<Route<Future = Box<Future<Item = Response, Error = hyper::Error>>>>;
@@ -45,10 +80,11 @@ impl Router {
 
     /// Tries to process the request, returning a future on first route match. If none of them
     /// match, returns a ready future with `NotFound` HTTP status.
-    pub fn process(&self, req: &Request) -> Box<Future<Item = Response, Error = hyper::Error>> {
+    pub fn process(&self, mut req: Request) -> Box<Future<Item = Response, Error = hyper::Error>> {
         for route in &self.routes {
-            if let Some(future) = route.process(&req) {
-                return future;
+            match route.process(req) {
+                Match::Some(future) => return future,
+                Match::None(r) => req = r,
             }
         }
 
