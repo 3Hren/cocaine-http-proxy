@@ -23,6 +23,7 @@
 //!
 //! [jsonrpc]: http://www.jsonrpc.org/specification
 
+// TODO: There are `println's` which help debugging a lot. May be transform then into debug logs?
 use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::mem;
@@ -294,7 +295,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
             if let Some(args) = params {
                 let graph = graph.tx.clone();
                 service.call(ty, &args, headers, dispatch).then(move |tx| {
-                    println!("After call");
+//                    println!("After call");
                     let mut graph = &graph;
 
                     if let Ok(tx) = tx {
@@ -304,9 +305,9 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                     let mut iter = chunk.into_iter();
                                     if iter.len() == 1 {
                                         let (event, args) = iter.next().unwrap();
-                                        println!("Event={}, args={:?}", event, args);
+//                                        println!("Event={}, args={:?}", event, args);
                                         if let Some((ty, g)) = graph.iter().find(|&(.., ref g)| g.event == event) {
-                                            println!("Type={}, Graph={:?}", ty, g);
+//                                            println!("Type={}, Graph={:?}", ty, g);
                                             match g.rx {
                                                 Some(ref g) if g.is_empty() => {
                                                     tx.send(*ty, &args);
@@ -321,7 +322,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                                 }
                                             }
                                         } else {
-                                            println!("event not found");
+//                                            println!("event not found");
                                             break;
                                         }
                                     }
