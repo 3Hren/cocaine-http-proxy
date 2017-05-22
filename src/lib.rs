@@ -38,6 +38,7 @@ extern crate futures;
 extern crate hyper;
 extern crate itertools;
 extern crate jsonrpc_core;
+extern crate libc;
 extern crate log;
 extern crate net2;
 extern crate num_cpus;

@@ -2,7 +2,6 @@
 
 use std::cell::RefCell;
 use std::io::{self};
-use std::mem;
 use std::net::{self, SocketAddr};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -16,6 +15,8 @@ use futures::task::{self, Task};
 
 use hyper;
 use hyper::server::{Http, Request, Response};
+
+use libc;
 
 use net2::TcpBuilder;
 use net2::unix::UnixTcpBuilderExt;
@@ -322,11 +323,9 @@ impl ServerGroup {
         let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
             let mut iter = dispatchers.into_iter().cycle();
             listener.incoming().for_each(move |(sock, addr)| {
-                let fd = sock.as_raw_fd();
-                mem::forget(sock); // TODO: Check whether this is correct.
-                let dup = unsafe { net::TcpStream::from_raw_fd(fd) };
-                let sock = dup.try_clone()?;
-                iter.next().expect("iterator is infinite").send((sock, addr)).unwrap();
+                let fd = unsafe { libc::dup(sock.as_raw_fd()) };
+                let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
+                iter.next().expect("iterator is infinite").send((cloned, addr)).unwrap();
                 Ok(())
             })
         });
