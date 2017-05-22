@@ -196,7 +196,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                         }
                                     }
                                     Some(..) | None => {
-                                        let err = Error::new(ErrorCode::InvalidParams);
+                                        let err = Error::invalid_params("'args' parameter is required and must be an array");
                                         let out = Output::from(Err(err), id, Some(Version::V2));
                                         return future::ok(Some(out)).boxed()
                                     }
@@ -339,8 +339,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                 }).boxed()
             }
         } else {
-            let err = Error::new(ErrorCode::MethodNotFound);
-            let out = Output::from(Err(err), id, Some(Version::V2));
+            let out = Output::from(Err(Error::method_not_found()), id, Some(Version::V2));
             mem::drop(tx.send(out));
             future::ok(()).boxed()
         }
@@ -372,12 +371,13 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
 
     fn process(&self, req: HttpRequest) -> Match<Self::Future> {
         if req.headers().has::<XJsonRpc>() {
+            // TODO: Send 406 back if there are no "application/json or json-rpc Accept.
             let d = self.dispatcher.clone();
             let log = self.log.clone();
 
             // TODO: There is a bug in `futures 0.1` when `concat` panics on empty stream (#451).
             let future = req.body().concat().and_then(move |data| {
-                let req: Request = match json::from_slice(&data) {
+                let req = match json::from_slice(&data) {
                     Ok(req) => req,
                     Err(..) => {
                         let resp = Response::from(Error::parse_error(), Some(Version::V2));
