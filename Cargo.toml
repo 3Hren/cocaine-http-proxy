@@ -12,6 +12,7 @@ serde_json = "1"
 serde_yaml = "0.7"
 jsonrpc-core = { git = "https://github.com/paritytech/jsonrpc" }
 
+libc = "0.2"
 log = "0.3"
 net2 = "0.2"
 rand = "0.3"
