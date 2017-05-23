@@ -1,16 +1,11 @@
 //! Roadmap:
-//! - [x] code style.
 //! - [x] GET config.
-//! - [x] decomposition.
 //! - [x] basic metrics: counters, rates.
 //! - [x] enable application services.
 //! - [x] smart reconnection in the pool.
 //! - [x] RG support for immediate updates.
-//! - [x] pass pool settings from config.
-//! - [x] fixed-size pool balancing.
 //! - [x] unicorn support for tracing.
 //! - [x] unicorn support for timeouts.
-//! - [x] headers in the framework.
 //! - [x] tracing.
 //! - [x] retry policy for applications.
 //! - [x] request timeouts.
