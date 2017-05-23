@@ -8,6 +8,7 @@ use std::iter::IntoIterator;
 use std::time::Duration;
 
 use futures::{Async, Future, IntoFuture, Poll};
+use futures::future::Loop;
 
 use tokio_core::reactor::{Handle, Timeout};
 
@@ -19,7 +20,7 @@ pub enum Error<T, E> {
     /// This value is returned if the policy has given up retrying, i.e. the iterator has been
     /// drained if it is not infinite. The value will contain an error if the last attempt has
     /// ended up with error. An `Ok` value is returned when the future resolved successfully, but
-    /// it decided to continue retrying for some reasons, by returning `RepeatResult::Repeat`.
+    /// it decided to continue retrying for some reasons, by returning `Loop::Continue`.
     Operation(Result<T, E>),
     /// Failed to create or activate the timer due to some I/O error.
     Timer(io::Error),
@@ -48,17 +49,6 @@ impl<T: Debug, E: Debug> error::Error for Error<T, E> {
             Error::Timer(ref err) => Some(err),
         }
     }
-}
-
-/// A value that must be returned from the future that is wrapped with `Retry`.
-///
-/// Passing an `Ok` will terminate the `Retry` future, passing result through. The `Repeat` value
-/// will not terminate the future, instead a new future will be created from the action as like as
-/// the retry policy reset and the computation will go on.
-pub enum RepeatResult<T> {
-    #[allow(unused)]
-    Ok(T),
-    Repeat(T),
 }
 
 enum State<F> {
@@ -101,7 +91,7 @@ pub struct Retry<T, F, U, P> {
 
 impl<T, F, R, U, P> Retry<T, F, U, P>
     where T: Action<Future = F>,
-          F: Future<Item = RepeatResult<R>>,
+          F: Future<Item = Loop<R, R>>,
           U: IntoIterator<Item = Duration, IntoIter = P> + Clone,
           P: Iterator<Item = Duration>
 {
@@ -130,7 +120,7 @@ impl<T, F, R, U, P> Retry<T, F, U, P>
 
 impl<T, F, R, U, P> Future for Retry<T, F, U, P>
     where T: Action<Future = F>,
-          F: Future<Item = RepeatResult<R>>,
+          F: Future<Item = Loop<R, R>>,
           U: IntoIterator<Item = Duration, IntoIter = P> + Clone,
           P: Iterator<Item = Duration>
 {
@@ -141,10 +131,10 @@ impl<T, F, R, U, P> Future for Retry<T, F, U, P>
         match self.state.take().expect("invalid internal state") {
             State::Run(mut future) => {
                 match future.poll() {
-                    Ok(Async::Ready(RepeatResult::Ok(v))) => {
+                    Ok(Async::Ready(Loop::Break(v))) => {
                         Ok(Async::Ready(v))
                     }
-                    Ok(Async::Ready(RepeatResult::Repeat(v))) => {
+                    Ok(Async::Ready(Loop::Continue(v))) => {
                         self.policy = self.policy_reset.clone().into_iter();
                         self.retry(Ok(v))
                     }
@@ -171,8 +161,3 @@ impl<T, F, R, U, P> Future for Retry<T, F, U, P>
         }
     }
 }
-
-// Retry::from(|| future)
-//     .with_policy(ExponentialBackOff::new(1..).map(jitter).take(3))
-//     .build(handle)
-//[1, 3, 7, 15].iter().chain(15..)

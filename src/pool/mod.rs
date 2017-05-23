@@ -6,6 +6,7 @@ use std::mem;
 use std::time::{Duration, SystemTime};
 
 use futures::{Async, Future, Poll, Stream};
+use futures::future::Loop;
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use rand;
 use tokio_core::reactor::Handle;
@@ -18,7 +19,7 @@ use cocaine::service::locator::HashRing;
 use cocaine::service::unicorn::{Close, Unicorn, Version};
 
 use config::{Config, PoolConfig, ServicePoolConfig};
-use retry::{Action, RepeatResult};
+use retry::Action;
 
 pub enum Event {
     Service {
@@ -367,7 +368,7 @@ pub struct RoutingGroupsUpdateTask {
 }
 
 impl Future for RoutingGroupsUpdateTask {
-    type Item = RepeatResult<()>;
+    type Item = Loop<(), ()>;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -385,7 +386,7 @@ impl Future for RoutingGroupsUpdateTask {
                     cocaine_log!(self.log, Severity::Info, "locator has closed RG subscription"; {
                         uuid: self.uuid,
                     });
-                    return Ok(Async::Ready(RepeatResult::Repeat(())));
+                    return Ok(Async::Ready(Loop::Continue(())));
                 }
                 Err(err) => {
                     cocaine_log!(self.log, Severity::Warn, "failed to update RG: {}", err; {
@@ -462,7 +463,7 @@ impl<F> Action for SubscribeAction<F>
 impl<F> Future for SubscribeTask<F>
     where F: Fn(HashMap<String, f64>)
 {
-    type Item = RepeatResult<()>;
+    type Item = Loop<(), ()>;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -500,7 +501,7 @@ impl<F> Future for SubscribeTask<F>
                             break;
                         }
                         Ok(Async::Ready(None)) => {
-                            return Ok(Async::Ready(RepeatResult::Repeat(())));
+                            return Ok(Async::Ready(Loop::Continue(())));
                         }
                         Err(err) => {
                             cocaine_log!(self.log, Severity::Warn, "failed to fetch subscriptions: {}", err; {
