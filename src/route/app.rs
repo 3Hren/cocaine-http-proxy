@@ -1,5 +1,6 @@
-use std::fmt;
-use std::io::{self, ErrorKind};
+use std::borrow::Cow;
+use std::error;
+use std::fmt::{self, Display, Formatter};
 use std::str;
 use std::sync::Arc;
 
@@ -7,19 +8,19 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use rand;
 
-use futures::{future, Async, BoxFuture, Future, Poll};
+use futures::{self, Async, BoxFuture, Future, Poll, future};
 use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
-use hyper::server::{Response, Request};
+use hyper::server::{Request, Response};
 
 use rmps;
 use rmpv::ValueRef;
 
-use cocaine::{Dispatch, Error, Service};
+use cocaine::{self, Dispatch, Service};
 use cocaine::hpack;
-use cocaine::logging::Logger;
+use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
@@ -35,7 +36,7 @@ struct XRequestId(u64);
 impl Into<u64> for XRequestId {
     fn into(self) -> u64 {
         match self {
-            XRequestId(v) => v
+            XRequestId(v) => v,
         }
     }
 }
@@ -62,6 +63,104 @@ impl Header for XRequestId {
     }
 }
 
+trait Call {
+    type Call: Fn(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send;
+    type Future: Future<Item = Response, Error = Error>;
+
+    fn call_service(&self, name: String, f: Self::Call) -> Self::Future;
+}
+
+pub struct AppRoute<L> {
+    dispatcher: EventDispatch,
+    tracing_header: Cow<'static, str>,
+    log: L,
+}
+
+impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
+    pub fn new(dispatcher: EventDispatch, log: L) -> Self {
+        Self {
+            dispatcher: dispatcher,
+            tracing_header: XRequestId::header_name().into(),
+            log: log,
+        }
+    }
+
+    pub fn with_tracing_header<H>(mut self, header: H) -> Self
+        where H: Into<Cow<'static, str>>
+    {
+        self.tracing_header = header.into();
+        self
+    }
+
+    /// Extracts required parameters from the request.
+    fn extract_parameters(&self, req: &Request) -> Option<Result<(String, String), Error>> {
+        let service = req.headers().get::<XCocaineService>();
+        let event = req.headers().get::<XCocaineEvent>();
+
+        match (service, event) {
+            (Some(service), Some(event)) => {
+                Some(Ok((service.to_string(), event.to_string())))
+            }
+            (Some(..), None) | (None, Some(..)) => Some(Err(Error::IncompleteHeadersMatch)),
+            (None, None) => None,
+        }
+    }
+
+    fn invoke(&self, service: String, event: String, req: Request)
+        -> Box<Future<Item = Response, Error = Error>>
+    {
+        let trace = if let Some(trace) = req.headers().get_raw(&self.tracing_header) {
+            match XRequestId::parse_header(trace) {
+                Ok(v) => v.into(),
+                Err(..) => {
+                    let err = Error::InvalidRequestIdHeader(self.tracing_header.clone());
+                    return future::err(err).boxed()
+                }
+            }
+        } else {
+            // TODO: Log (debug) trace id source (header or generated).
+            rand::random::<u64>()
+        };
+
+        let log = AccessLogger::new(self.log.clone(), &req);
+        // TODO: Collect body first of all.
+        let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.dispatcher.clone(), 3)
+            .and_then(move |(mut resp, bytes_sent)| {
+                resp.headers_mut().set_raw("X-Powered-By", "Cocaine");
+                log.commit(trace, resp.status().into(), bytes_sent);
+                Ok(resp)
+            });
+        future.boxed()
+    }
+}
+
+impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
+    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
+
+    fn process(&self, req: Request) -> Match<Self::Future> {
+        match self.extract_parameters(&req) {
+            Some(Ok((service, event))) => {
+                let future = self.invoke(service, event, req).then(|resp| {
+                    resp.or_else(|err| {
+                        let resp = Response::new()
+                            .with_status(err.code())
+                            .with_body(err.to_string());
+                        Ok(resp)
+                    })
+                });
+                Match::Some(Box::new(future))
+            }
+            Some(Err(err)) => {
+                let resp = Response::new()
+                    .with_status(err.code())
+                    .with_body(err.to_string());
+                Match::Some(future::ok(resp).boxed())
+            }
+            None => Match::None(req),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AppRequest {
     service: String,
@@ -75,11 +174,11 @@ struct AppRequest {
 }
 
 impl AppRequest {
-    fn new(service: String, event: String, trace: u64, req: &Request) -> Self {
-        let headers = req.headers().iter().map(|header| {
-            (header.name().to_string(), header.value_string())
-        }).collect();
-
+    fn new(service: String, event: String, trace: u64, req: Request) -> Self {
+        let headers = req.headers()
+            .iter()
+            .map(|header| (header.name().to_string(), header.value_string()))
+            .collect();
 
         let version = if let HttpVersion::Http11 = req.version() {
             1
@@ -100,18 +199,18 @@ impl AppRequest {
     }
 }
 
-/// A future that retries application invocation on receiving "safe" error, meaning that it is safe
-/// to retry it again until the specified limit reached.
+/// A future that retries application invocation on receiving "safe" error,
+/// meaning that it is safe to retry it again until the specified limit reached.
 ///
-/// In this context "safety" means, that the request is guaranteed not to be delivered into the
-/// worker, for example when the queue is full.
+/// In this context "safety" means, that the request is guaranteed not to be
+/// delivered to the worker, for example when the queue is full.
 struct AppWithSafeRetry {
     attempts: u32,
     limit: u32,
     request: Arc<AppRequest>,
     dispatcher: EventDispatch,
     headers: Vec<hpack::Header>,
-    current: Option<BoxFuture<Option<(Response, u64)>, hyper::Error>>,
+    current: Option<BoxFuture<Option<(Response, u64)>, Error>>,
 }
 
 impl AppWithSafeRetry {
@@ -140,7 +239,7 @@ impl AppWithSafeRetry {
         res
     }
 
-    fn make_future(&self) -> BoxFuture<Option<(Response, u64)>, hyper::Error> {
+    fn make_future(&self) -> BoxFuture<Option<(Response, u64)>, Error> {
         let (tx, rx) = oneshot::channel();
 
         let request = self.request.clone();
@@ -178,9 +277,7 @@ impl AppWithSafeRetry {
 
         self.dispatcher.send(ev);
 
-        let future = rx.map_err(|err| {
-            hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err)))
-        });
+        let future = rx.map_err(|futures::Canceled| Error::Canceled);
 
         future.boxed()
     }
@@ -188,7 +285,7 @@ impl AppWithSafeRetry {
 
 impl Future for AppWithSafeRetry {
     type Item = (Response, u64);
-    type Error = hyper::Error;
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let mut future = self.current.take().unwrap();
@@ -220,63 +317,48 @@ impl Future for AppWithSafeRetry {
     }
 }
 
-pub struct AppRoute {
-    dispatcher: EventDispatch,
-    trace_header: String,
-    log: Logger,
+#[derive(Debug)]
+enum Error {
+    /// Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers
+    /// must be specified.
+    IncompleteHeadersMatch,
+    /// Failed to parse special tracing header, by default `X-Request-Id`.
+    InvalidRequestIdHeader(Cow<'static, str>),
+//    RetryLimitExceeded(u32),
+//    Service(cocaine::Error),
+    Canceled,
 }
 
-impl AppRoute {
-    // TODO: Make `tracing_header` optional. Use builder.
-    pub fn new(dispatcher: EventDispatch, trace_header: String, log: Logger) -> Self {
-        Self {
-            dispatcher: dispatcher,
-            trace_header: trace_header,
-            log: log,
+impl Error {
+    fn code(&self) -> StatusCode {
+        match *self {
+            Error::IncompleteHeadersMatch |
+            Error::InvalidRequestIdHeader(..) => StatusCode::BadRequest,
+            Error::Canceled => StatusCode::InternalServerError,
         }
     }
 }
 
-impl Route for AppRoute {
-    type Future = Box<Future<Item = Response, Error = hyper::Error>>;
-
-    fn process(&self, req: Request) -> Match<Self::Future> {
-        let service = req.headers().get::<XCocaineService>().map(|h| h.to_string());
-        let event = req.headers().get::<XCocaineEvent>().map(|h| h.to_string());
-
-        match (service, event) {
-            (Some(service), Some(event)) => {
-                let trace = if let Some(trace) = req.headers().get_raw(&self.trace_header) {
-                    match XRequestId::parse_header(trace) {
-                        Ok(v) => v.into(),
-                        Err(..) => {
-                            let res = Response::new()
-                                .with_status(StatusCode::BadRequest)
-                                .with_body(format!("Invalid `{}` header value", self.trace_header));
-                            return Match::Some(future::ok(res).boxed());
-                        }
-                    }
-                } else {
-                    rand::random::<u64>()
-                };
-
-                let log = AccessLogger::new(self.log.clone(), &req);
-                // TODO: Collect body first of all.
-                let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, &req), self.dispatcher.clone(), 3)
-                    .and_then(move |(mut res, bytes_sent)| {
-                        res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-                        log.commit(trace, res.status().into(), bytes_sent);
-                        Ok(res)
-                    });
-                Match::Some(future.boxed())
+impl Display for Error {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            Error::IncompleteHeadersMatch => fmt.write_str(error::Error::description(self)),
+            Error::InvalidRequestIdHeader(ref name) => {
+                write!(fmt, "Invalid `{}` header value", name)
             }
-            (Some(..), None) | (None, Some(..)) => {
-                let res = Response::new()
-                    .with_status(StatusCode::BadRequest)
-                    .with_body("Either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified");
-                Match::Some(future::ok(res).boxed())
+            Error::Canceled => fmt.write_str("canceled"),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::IncompleteHeadersMatch => {
+                "either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified"
             }
-            (None, None) => Match::None(req),
+            Error::InvalidRequestIdHeader(..) => "invalid tracing header value",
+            Error::Canceled => "canceled",
         }
     }
 }
@@ -322,12 +404,12 @@ impl Dispatch for AppReadDispatch {
                 None
             }
             // TODO: Make names for category and code.
-            Err(Error::Service(ref err)) if err.category() == 0x52ff && err.code() == 1 => {
+            Err(cocaine::Error::Service(ref err)) if err.category() == 0x52ff && err.code() == 1 => {
                 drop(self.tx.send(None));
                 None
             }
             Err(err) => {
-                let body = format!("{}", err);
+                let body = err.to_string();
                 let body_len = body.len() as u64;
 
                 // TODO: If service is not available - write 503 (or other custom code).
@@ -340,8 +422,8 @@ impl Dispatch for AppReadDispatch {
         }
     }
 
-    fn discard(self: Box<Self>, err: &Error) {
-        let body = format!("{}", err);
+    fn discard(self: Box<Self>, err: &cocaine::Error) {
+        let body = err.to_string();
         let body_len = body.as_bytes().len() as u64;
 
         let res = Response::new()
@@ -349,4 +431,25 @@ impl Dispatch for AppReadDispatch {
             .with_body(body);
         drop(self.tx.send(Some((res, body_len))));
     }
+}
+
+#[test]
+fn test_request_id_header() {
+    let header = XRequestId::parse_header(&Raw::from("2a")).unwrap();
+    let value: u64 = header.into();
+    assert_eq!(42, value);
+}
+
+#[test]
+fn test_request_id_header_offset() {
+    let header = XRequestId::parse_header(&Raw::from("0000002a")).unwrap();
+    let value: u64 = header.into();
+    assert_eq!(42, value);
+}
+
+#[test]
+fn test_request_id_header_err() {
+    assert!(XRequestId::parse_header(&Raw::from("")).is_err());
+    assert!(XRequestId::parse_header(&Raw::from("0x42")).is_err());
+    assert!(XRequestId::parse_header(&Raw::from("damn")).is_err());
 }

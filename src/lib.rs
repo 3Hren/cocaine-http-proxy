@@ -219,7 +219,8 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     };
 
     let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(dispatch.clone(), config.tracing().header().into(), logging.access().clone())));
+    router.add(Arc::new(AppRoute::new(dispatch.clone(), logging.access().clone())
+        .with_tracing_header(config.tracing().header().to_owned())));
     router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().clone())));
     router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
 

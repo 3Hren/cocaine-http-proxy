@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use hyper::server::Request;
 
-use cocaine::logging::{Logger, LoggerContext, Severity};
+use cocaine::logging::{Log, Logger, LoggerContext, Severity};
 
 use config::{LoggingBaseConfig, LoggingConfig};
 
@@ -49,16 +49,16 @@ impl<'a> From<&'a LoggingConfig> for Loggers {
 }
 
 #[derive(Clone, Debug)]
-pub struct AccessLogger {
+pub struct AccessLogger<L> {
     birth: Instant,
     method: String,
     path: String,
     version: String,
-    log: Logger,
+    log: L,
 }
 
-impl AccessLogger {
-    pub fn new(log: Logger, req: &Request) -> Self {
+impl<L: Log> AccessLogger<L> {
+    pub fn new(log: L, req: &Request) -> Self {
         Self {
             birth: Instant::now(),
             method: req.method().as_ref().to_owned(),
