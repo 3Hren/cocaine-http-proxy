@@ -21,11 +21,16 @@ use cocaine::service::unicorn::{Close, Unicorn, Version};
 use config::{Config, PoolConfig, ServicePoolConfig};
 use retry::Action;
 
+#[derive(Clone, Copy, Debug)]
+pub struct Settings {
+    pub verbose: bool,
+//    timeout: f64,
+}
+
 pub enum Event {
     Service {
         name: String,
-        // TODO: Better to provide something like `Settings`.
-        func: Box<FnBox(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send>,
+        func: Box<FnBox(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send>,
     },
     OnServiceConnect(Service),
     OnRoutingUpdates(HashMap<String, HashRing>),
@@ -279,13 +284,15 @@ impl Future for PoolTask {
                 Ok(Async::Ready(Some(event))) => {
                     match event {
                         Event::Service { name, func } => {
-                            let trace_bit = self.tracing.calculate_trace_bit(&name);
+                            let settings = Settings {
+                                verbose: self.tracing.calculate_trace_bit(&name)
+                            };
 
                             // Select the next service that is not reconnecting right now.
                             let handle = self.handle.clone();
                             let ref service = self.select_service(name, &handle);
 
-                            let future = func.call_box((service, trace_bit));
+                            let future = func.call_box((service, settings));
                             handle.spawn(future);
                         }
                         Event::OnServiceConnect(service) => {

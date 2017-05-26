@@ -9,7 +9,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use rand;
 
 use futures::{self, Async, BoxFuture, Future, Poll, future};
-use futures::sync::oneshot;
+use futures::sync::oneshot::{self, Receiver};
 
 use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
@@ -24,7 +24,7 @@ use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
-use pool::{Event, EventDispatch};
+use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
@@ -67,7 +67,9 @@ trait Call {
     type Call: Fn(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send;
     type Future: Future<Item = Response, Error = Error>;
 
-    fn call_service(&self, name: String, f: Self::Call) -> Self::Future;
+    /// Selects an appropriate service with its settings from the pool and
+    /// passes them to the provided callback.
+    fn call_service(&self, name: String, callback: Self::Call) -> Self::Future;
 }
 
 pub struct AppRoute<L> {
@@ -93,7 +95,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
     }
 
     /// Extracts required parameters from the request.
-    fn extract_parameters(&self, req: &Request) -> Option<Result<(String, String), Error>> {
+    fn extract_parameters(req: &Request) -> Option<Result<(String, String), Error>> {
         let service = req.headers().get::<XCocaineService>();
         let event = req.headers().get::<XCocaineEvent>();
 
@@ -138,7 +140,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
     fn process(&self, req: Request) -> Match<Self::Future> {
-        match self.extract_parameters(&req) {
+        match Self::extract_parameters(&req) {
             Some(Ok((service, event))) => {
                 let future = self.invoke(service, event, req).then(|resp| {
                     resp.or_else(|err| {
@@ -246,8 +248,8 @@ impl AppWithSafeRetry {
         let mut headers = self.headers.clone();
         let ev = Event::Service {
             name: request.service.clone(),
-            func: box move |service: &Service, trace_bit: bool| {
-                if trace_bit {
+            func: box move |service: &Service, settings: Settings| {
+                if settings.verbose {
                     headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 

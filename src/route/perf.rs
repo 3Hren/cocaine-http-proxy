@@ -17,7 +17,7 @@ use cocaine::{Dispatch, Error, Service};
 use cocaine::logging::Logger;
 
 use logging::AccessLogger;
-use pool::{Event, EventDispatch};
+use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
 
 pub struct PerfRoute {
@@ -42,7 +42,7 @@ impl Route for PerfRoute {
 
         let ev = Event::Service {
             name: "geobase".into(),
-            func: box move |service: &Service, _trace: bool| {
+            func: box move |service: &Service, _settings: Settings| {
                 let future = service.call(0, &vec!["8.8.8.8"], Vec::new(), SingleChunkReadDispatch { tx: tx })
                     .then(|tx| {
                         drop(tx);

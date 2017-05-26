@@ -48,7 +48,7 @@ use cocaine::{self, Dispatch, Service};
 use cocaine::service::locator::{EventGraph, GraphNode};
 use cocaine::logging::{Severity, Log};
 
-use pool::{Event, EventDispatch};
+use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
 
 header! { (XJsonRpc, "X-Cocaine-JSON-RPC") => [i64] }
@@ -210,7 +210,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 
                         let ev = Event::Service {
                             name: service,
-                            func: box move |service: &Service, _trace: bool| {
+                            func: box move |service: &Service, _settings: Settings| {
                                 let methods = match service.methods() {
                                     Some(methods) => methods,
                                     None => {
