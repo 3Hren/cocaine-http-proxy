@@ -28,7 +28,7 @@ use cocaine::protocol::{self, Flatten};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
-use route::util::StreamExt;
+use route::workaround::StreamExt;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
