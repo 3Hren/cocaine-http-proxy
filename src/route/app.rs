@@ -129,16 +129,13 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         };
 
         let log = AccessLogger::new(self.log.clone(), &req);
-        // TODO: Collect body first of all.
         let mut app_request = AppRequest::new(service, event, trace, &req);
         let dispatcher = self.dispatcher.clone();
         req.body()
             .concat2()
-            .map_err(Error::Io)
+            .map_err(Error::InvalidBodyRead)
             .and_then(move |body| {
-                let body = String::from_utf8_lossy(&body.as_ref()).into();
-                app_request.set_body(body);
-
+                app_request.set_body(body.to_vec());
                 AppWithSafeRetry::new(app_request, dispatcher, 3)
             })
             .and_then(move |(mut resp, bytes_sent)| {
@@ -188,7 +185,7 @@ struct RequestMeta {
     headers: Vec<(String, String)>,
     /// HTTP body. May be empty either when there is no body in the request or if it is transmitted
     /// later.
-    body: String,
+    body: Vec<u8>,
 }
 
 #[inline]
@@ -203,12 +200,12 @@ fn serialize_version<S>(version: &HttpVersion, se: S) -> Result<S::Ok, S::Error>
     where S: Serializer
 {
     let v = if let &HttpVersion::Http11 = version {
-        1
+        "1"
     } else {
-        0
+        "0"
     };
 
-    se.serialize_u8(v)
+    se.serialize_str(v)
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,7 +234,7 @@ impl AppRequest {
             version: req.version(),
             path: req.path().into(),
             headers: headers,
-            body: String::new(),
+            body: Vec::new(),
         };
 
         Self {
@@ -248,7 +245,7 @@ impl AppRequest {
         }
     }
 
-    fn set_body(&mut self, body: String) {
+    fn set_body(&mut self, body: Vec<u8>) {
         self.frame.body = body;
     }
 }
@@ -373,7 +370,7 @@ enum Error {
     InvalidRequestIdHeader(Cow<'static, str>),
 //    RetryLimitExceeded(u32),
 //    Service(cocaine::Error),
-    Io(hyper::Error),
+    InvalidBodyRead(hyper::Error),
     Canceled,
 }
 
@@ -382,7 +379,7 @@ impl Error {
         match *self {
             Error::IncompleteHeadersMatch |
             Error::InvalidRequestIdHeader(..) => StatusCode::BadRequest,
-            Error::Io(..) => StatusCode::InternalServerError,
+            Error::InvalidBodyRead(..) |
             Error::Canceled => StatusCode::InternalServerError,
         }
     }
@@ -395,7 +392,7 @@ impl Display for Error {
             Error::InvalidRequestIdHeader(ref name) => {
                 write!(fmt, "Invalid `{}` header value", name)
             }
-            Error::Io(ref err) => write!(fmt, "{}", err),
+            Error::InvalidBodyRead(ref err) => write!(fmt, "{}", err),
             Error::Canceled => fmt.write_str("canceled"),
         }
     }
@@ -408,7 +405,7 @@ impl error::Error for Error {
                 "either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified"
             }
             Error::InvalidRequestIdHeader(..) => "invalid tracing header value",
-            Error::Io(..) => "failed to read HTTP body",
+            Error::InvalidBodyRead(..) => "failed to read HTTP body",
             Error::Canceled => "canceled",
         }
     }
