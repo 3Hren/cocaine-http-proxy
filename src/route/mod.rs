@@ -13,6 +13,7 @@ pub use self::perf::PerfRoute;
 mod app;
 mod jsonrpc;
 mod perf;
+pub mod util;
 
 #[derive(Debug)]
 pub enum Match<F> {

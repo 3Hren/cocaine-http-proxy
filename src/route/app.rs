@@ -18,6 +18,8 @@ use hyper::server::{Request, Response};
 use rmps;
 use rmpv::ValueRef;
 
+use serde::Serializer;
+
 use cocaine::{self, Dispatch, Service};
 use cocaine::hpack;
 use cocaine::logging::Log;
@@ -26,9 +28,11 @@ use cocaine::protocol::{self, Flatten};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
+use route::util::StreamExt;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
+header! { (XPoweredBy, "X-Powered-By") => [String] }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct XRequestId(u64);
@@ -126,13 +130,23 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
 
         let log = AccessLogger::new(self.log.clone(), &req);
         // TODO: Collect body first of all.
-        let future = AppWithSafeRetry::new(AppRequest::new(service, event, trace, req), self.dispatcher.clone(), 3)
+        let mut app_request = AppRequest::new(service, event, trace, &req);
+        let dispatcher = self.dispatcher.clone();
+        req.body()
+            .concat2()
+            .map_err(Error::Io)
+            .and_then(move |body| {
+                let body = String::from_utf8_lossy(&body.as_ref()).into();
+                app_request.set_body(body);
+
+                AppWithSafeRetry::new(app_request, dispatcher, 3)
+            })
             .and_then(move |(mut resp, bytes_sent)| {
-                resp.headers_mut().set_raw("X-Powered-By", "Cocaine");
+                resp.headers_mut().set(XPoweredBy("Cocaine".into()));
                 log.commit(trace, resp.status().into(), bytes_sent);
                 Ok(resp)
-            });
-        future.boxed()
+            })
+            .boxed()
     }
 }
 
@@ -163,41 +177,79 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
     }
 }
 
+/// A meta frame of HTTP request for cocaine application HTTP protocol.
+#[derive(Clone, Serialize)]
+struct RequestMeta {
+    #[serde(serialize_with = "serialize_method")]
+    method: Method,
+    path: String,
+    #[serde(serialize_with = "serialize_version")]
+    version: HttpVersion,
+    headers: Vec<(String, String)>,
+    /// HTTP body. May be empty either when there is no body in the request or if it is transmitted
+    /// later.
+    body: String,
+}
+
+#[inline]
+fn serialize_method<S>(method: &Method, se: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    se.serialize_str(&method.to_string())
+}
+
+#[inline]
+fn serialize_version<S>(version: &HttpVersion, se: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    let v = if let &HttpVersion::Http11 = version {
+        1
+    } else {
+        0
+    };
+
+    se.serialize_u8(v)
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseMeta {
+    code: u32,
+    headers: Vec<(String, String)>
+}
+
 #[derive(Clone)]
 struct AppRequest {
     service: String,
     event: String,
     trace: u64,
-    method: Method,
-    version: u8,
-    path: String,
-    headers: Vec<(String, String)>,
-    body: String,
+    frame: RequestMeta,
 }
 
 impl AppRequest {
-    fn new(service: String, event: String, trace: u64, req: Request) -> Self {
+    fn new(service: String, event: String, trace: u64, req: &Request) -> Self {
         let headers = req.headers()
             .iter()
             .map(|header| (header.name().to_string(), header.value_string()))
             .collect();
 
-        let version = if let HttpVersion::Http11 = req.version() {
-            1
-        } else {
-            0
+        let frame = RequestMeta {
+            method: req.method().clone(),
+            version: req.version(),
+            path: req.path().into(),
+            headers: headers,
+            body: String::new(),
         };
 
         Self {
             service: service,
             event: event,
             trace: trace,
-            method: req.method().clone(),
-            version: version,
-            path: req.path().into(),
-            headers: headers,
-            body: String::new(),
+            frame: frame,
         }
+    }
+
+    fn set_body(&mut self, body: String) {
+        self.frame.body = body;
     }
 }
 
@@ -258,14 +310,7 @@ impl AppWithSafeRetry {
                     body: None,
                     response: Some(Response::new()),
                 }).and_then(move |tx| {
-                    let buf = rmps::to_vec(&(
-                        request.method.to_string(),
-                        &request.path,
-                        &request.version,
-                        &request.headers[..],
-                        // TODO: Proper body.
-                        ""
-                    )).unwrap();
+                    let buf = rmps::to_vec(&request.frame).unwrap();
                     tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
                     tx.send(2, &[0; 0]);
                     Ok(())
@@ -328,6 +373,7 @@ enum Error {
     InvalidRequestIdHeader(Cow<'static, str>),
 //    RetryLimitExceeded(u32),
 //    Service(cocaine::Error),
+    Io(hyper::Error),
     Canceled,
 }
 
@@ -336,6 +382,7 @@ impl Error {
         match *self {
             Error::IncompleteHeadersMatch |
             Error::InvalidRequestIdHeader(..) => StatusCode::BadRequest,
+            Error::Io(..) => StatusCode::InternalServerError,
             Error::Canceled => StatusCode::InternalServerError,
         }
     }
@@ -348,6 +395,7 @@ impl Display for Error {
             Error::InvalidRequestIdHeader(ref name) => {
                 write!(fmt, "Invalid `{}` header value", name)
             }
+            Error::Io(ref err) => write!(fmt, "{}", err),
             Error::Canceled => fmt.write_str("canceled"),
         }
     }
@@ -360,15 +408,10 @@ impl error::Error for Error {
                 "either none or both `X-Cocaine-Service` and `X-Cocaine-Event` headers must be specified"
             }
             Error::InvalidRequestIdHeader(..) => "invalid tracing header value",
+            Error::Io(..) => "failed to read HTTP body",
             Error::Canceled => "canceled",
         }
     }
-}
-
-#[derive(Deserialize)]
-struct MetaInfo {
-    code: u32,
-    headers: Vec<(String, String)>
 }
 
 struct AppReadDispatch {
@@ -383,7 +426,7 @@ impl Dispatch for AppReadDispatch {
             // TODO: Support chunked transfer encoding.
             Ok(Some(data)) => {
                 if self.body.is_none() {
-                    let meta: MetaInfo = rmps::from_slice(data.as_bytes()).unwrap();
+                    let meta: ResponseMeta = rmps::from_slice(data.as_bytes()).unwrap();
                     let mut res = self.response.take().unwrap();
                     res.set_status(StatusCode::from_u16(meta.code as u16));
                     for (name, value) in meta.headers {

@@ -21,6 +21,7 @@
 //! - [ ] logging review.
 //! - [ ] support Cocaine authentication.
 //! - [ ] count 2xx, 4xx, 5xx HTTP codes.
+//! - [ ] check whether the proxy outlives runtime restarts.
 
 #![feature(box_syntax, fnbox, integer_atomics)]
 
