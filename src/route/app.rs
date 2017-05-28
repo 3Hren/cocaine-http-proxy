@@ -9,7 +9,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use rand;
 
 use futures::{self, Async, BoxFuture, Future, Poll, future};
-use futures::sync::oneshot::{self, Receiver};
+use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
@@ -424,20 +424,22 @@ impl Dispatch for AppReadDispatch {
             Ok(Some(data)) => {
                 if self.body.is_none() {
                     let meta: ResponseMeta = rmps::from_slice(data.as_bytes()).unwrap();
-                    let mut res = self.response.take().unwrap();
-                    res.set_status(StatusCode::from_u16(meta.code as u16));
+                    let mut resp = self.response.take().unwrap();
+                    resp.set_status(StatusCode::from_u16(meta.code as u16));
                     for (name, value) in meta.headers {
-                        res.headers_mut().set_raw(name, value);
+                        // TODO: Filter headers - https://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-14#section-7.1.3
+                        resp.headers_mut().set_raw(name, value);
                     }
-                    self.response = Some(res);
                     self.body = Some(Vec::with_capacity(64));
                 } else {
+                    // TODO: If TE: chunked - feed parser. Consume chunks until None and send.
+                    // TODO: Otherwise - just send.
                     self.body.as_mut().unwrap().extend(data.as_bytes());
                 }
                 Some(self)
             }
             Ok(None) => {
-                let body = String::from_utf8_lossy(&self.body.take().unwrap()).into_owned();
+                let body = self.body.take().unwrap();
                 let body_len = body.len() as u64;
 
                 let mut res = self.response.take().unwrap();
