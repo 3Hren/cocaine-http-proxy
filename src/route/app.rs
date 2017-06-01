@@ -430,6 +430,7 @@ impl Dispatch for AppReadDispatch {
                         // TODO: Filter headers - https://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-14#section-7.1.3
                         resp.headers_mut().set_raw(name, value);
                     }
+                    self.response = Some(resp);
                     self.body = Some(Vec::with_capacity(64));
                 } else {
                     // TODO: If TE: chunked - feed parser. Consume chunks until None and send.
