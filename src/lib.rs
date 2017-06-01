@@ -22,6 +22,7 @@
 //! - [ ] support Cocaine authentication.
 //! - [ ] count 2xx, 4xx, 5xx HTTP codes.
 //! - [ ] check whether the proxy outlives runtime restarts.
+//! - [ ] optional rate limiter (for image processing apps overload protection).
 
 #![feature(box_syntax, fnbox, integer_atomics)]
 
