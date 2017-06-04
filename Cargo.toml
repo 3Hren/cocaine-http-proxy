@@ -2,6 +2,10 @@
 name = "cocaine-http-proxy"
 version = "0.1.0"
 authors = ["Evgeny Safronov <division494@gmail.com>"]
+license = "MIT"
+description = "HTTP proxy for Cocaine APE Cloud"
+homepage = "https://github.com/cocaine/cocaine-http-proxy"
+repository = "https://github.com/cocaine/cocaine-http-proxy"
 
 [dependencies]
 byteorder = "1"
@@ -40,3 +44,16 @@ panic = "abort"
 [profile.release]
 debug = true
 panic = "abort"
+
+[package.metadata.deb]
+maintainer = "Evgeny Safronov <division494@gmail.com>"
+copyright = "2017, Evgeny Safronov <division494@gmail.com>"
+license_file = ["LICENSE", "4"]
+extended_description = """An entry point for the Cocaine APE Cloud
+Terminates HTTP trafic, allowing to call Cocaine applications and services."""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/cocaine-http-proxy", "usr/bin/", "755"],
+]
