@@ -68,7 +68,7 @@ impl Header for XRequestId {
 }
 
 trait Call {
-    type Call: Fn(&Service, bool) -> Box<Future<Item=(), Error=()> + Send> + Send;
+    type Call: Fn(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send;
     type Future: Future<Item = Response, Error = Error>;
 
     /// Selects an appropriate service with its settings from the pool and

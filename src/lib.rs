@@ -16,7 +16,7 @@
 //! - [ ] clean code.
 //! - [ ] metrics: histograms.
 //! - [ ] MDS direct.
-//! - [ ] Streaming logging through HTTP.
+//! - [ ] streaming logging through HTTP.
 //! - [ ] plugin system.
 //! - [ ] logging review.
 //! - [ ] support Cocaine authentication.

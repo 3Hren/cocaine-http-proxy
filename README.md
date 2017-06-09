@@ -4,6 +4,28 @@ An entry point to the Cocaine Cloud.
 
 Cocaine HTTP proxy terminates HTTP traffic and transforms it into the binary protocol, allowing to communicate with Cloud services and applications.
 
+ВСТАВИТЬ КАРТИНКУ ГРАФ HTTP-PROXY-COCAINE-APP
+
+It's a high-performance solution, developed to transparently replace the [cocaine-tornado-proxy][cocaine-tornado-proxy] that is written in Python. 
+
+### Installation
+The HTTP proxy can now be built only from sources.
+
+You can install a binary compiled with Rust nightly using `cargo`. Note that this requires you to have Rust **nightly** with version 1.17 or newer installed.
+
+```bash
+cargo install --path=PATH
+```
+
+Additionally, if you're a Debian user you may find convenient to build a Debian package using the following command.
+
+```bash
+cargo install --git=https://github.com/mmstick/cargo-deb
+cargo deb
+```
+
+The resulted debian package lies in `./target/debian` directory.
+
 ### Features
 
 ##### High performance and low memory footprint.
@@ -55,6 +77,7 @@ esafronov@local:~$ curl http://localhost:8080/ -H"X-Cocaine-JSON-RPC: 1" -d '{"j
 #### Planning
 - [ ] Server back-pressure.
 
-[rmp]: http://
-[cocaine-framework-rust]: http://
+[rmp]: https://github.com/3Hren/msgpack-rust
+[cocaine-framework-rust]: https://github.com/3Hren/cocaine-framework-rust
 [jsonrpc]: http://www.jsonrpc.org/specification
+[cocaine-tornado-proxy]: https://github.com/cocaine/cocaine-tools/tree/master/cocaine/proxy
