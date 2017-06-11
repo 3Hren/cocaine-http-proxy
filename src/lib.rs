@@ -66,7 +66,7 @@ use futures::sync::mpsc;
 use serde::Serializer;
 use serde::ser::SerializeMap;
 
-use cocaine::{Builder, Core};
+use cocaine::{Core, ServiceBuilder};
 use cocaine::logging::Severity;
 use cocaine::service::{Locator, Unicorn};
 
@@ -92,8 +92,6 @@ pub mod util;
 
 const DEFAULT_LOCATOR_NAME: &str = "locator";
 const THREAD_NAME_PERIODIC: &str = "periodic";
-
-type ServiceBuilder<T> = Builder<T>;
 
 #[derive(Debug, Default, Serialize)]
 struct ConnectionMetrics {

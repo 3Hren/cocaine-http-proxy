@@ -12,7 +12,7 @@ use console::{self, Term};
 
 use itertools::Itertools;
 
-use cocaine::{Builder, Core, Error, FixedResolver};
+use cocaine::{Core, Error, FixedResolver, ServiceBuilder};
 
 use Config;
 
@@ -30,19 +30,19 @@ pub fn run_dashboard(cfg: Config) -> JoinHandle<Result<(), Error>> {
             .collect::<Vec<SocketAddr>>();
 
         let mut core = Core::new()?;
-        let locator = Builder::new("locator")
+        let locator = ServiceBuilder::new("locator")
             .resolver(FixedResolver::new(locator_addrs.clone()))
             .build(&core.handle());
 
-        let logging_common = Builder::new(cfg.logging().common().name().to_owned())
+        let logging_common = ServiceBuilder::new(cfg.logging().common().name().to_owned())
             .locator_addrs(locator_addrs.clone())
             .build(&core.handle());
 
-        let logging_access = Builder::new(cfg.logging().access().name().to_owned())
+        let logging_access = ServiceBuilder::new(cfg.logging().access().name().to_owned())
             .locator_addrs(locator_addrs.clone())
             .build(&core.handle());
 
-        let unicorn = Builder::new("unicorn")
+        let unicorn = ServiceBuilder::new("unicorn")
             .locator_addrs(locator_addrs.clone())
             .build(&core.handle());
 
