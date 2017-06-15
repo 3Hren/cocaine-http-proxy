@@ -376,7 +376,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
             let log = self.log.clone();
 
             // TODO: There is a bug in `futures 0.1` when `concat` panics on empty stream (#451).
-            let future = req.body().concat().and_then(move |data| {
+            let future = req.body().concat2().and_then(move |data| {
                 let req = match json::from_slice(&data) {
                     Ok(req) => req,
                     Err(..) => {

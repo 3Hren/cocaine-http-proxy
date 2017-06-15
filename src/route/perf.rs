@@ -73,22 +73,22 @@ impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
         let (code, body) = match ty {
             0 => {
-                (200, format!("{}", data))
+                (StatusCode::Ok, format!("{}", data))
             }
             1 => {
-                (500, format!("{}", data))
+                (StatusCode::InternalServerError, format!("{}", data))
             }
             m => {
-                (500, format!("unknown type: {} {}", m, data))
+                (StatusCode::InternalServerError, format!("unknown type: {} {}", m, data))
             }
         };
 
         let body_len = body.as_bytes().len() as u64;
 
-        let mut res = Response::new();
-        res.set_status(StatusCode::from_u16(code as u16));
-        res.headers_mut().set(ContentLength(body_len));
-        res.set_body(body);
+        let res = Response::new()
+            .with_status(code)
+            .with_header(ContentLength(body_len))
+            .with_body(body);
 
         drop(self.tx.send((res, body_len)));
 

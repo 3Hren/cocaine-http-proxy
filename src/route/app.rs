@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use rand;
 
-use futures::{self, Async, BoxFuture, Future, Poll, future};
+use futures::{self, Async, BoxFuture, Future, Poll, Stream, future};
 use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
@@ -28,7 +28,6 @@ use cocaine::protocol::{self, Flatten};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
-use route::workaround::StreamExt;
 
 header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
@@ -425,7 +424,7 @@ impl Dispatch for AppReadDispatch {
                 if self.body.is_none() {
                     let meta: ResponseMeta = rmps::from_slice(data.as_bytes()).unwrap();
                     let mut resp = self.response.take().unwrap();
-                    resp.set_status(StatusCode::from_u16(meta.code as u16));
+                    resp.set_status(StatusCode::try_from(meta.code as u16).unwrap_or(StatusCode::InternalServerError));
                     for (name, value) in meta.headers {
                         // TODO: Filter headers - https://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-14#section-7.1.3
                         resp.headers_mut().set_raw(name, value);
