@@ -1,4 +1,5 @@
 # Cocaine HTTP proxy
+[![Build Status][ci-img]][ci-url]
 
 An entry point to the Cocaine Cloud.
 
@@ -81,3 +82,5 @@ esafronov@local:~$ curl http://localhost:8080/ -H"X-Cocaine-JSON-RPC: 1" -d '{"j
 [cocaine-framework-rust]: https://github.com/3Hren/cocaine-framework-rust
 [jsonrpc]: http://www.jsonrpc.org/specification
 [cocaine-tornado-proxy]: https://github.com/cocaine/cocaine-tools/tree/master/cocaine/proxy
+[ci-img]: https://travis-ci.org/3Hren/cocaine-http-proxy.svg?branch=master
+[ci-url]: https://travis-ci.org/3Hren/cocaine-http-proxy
