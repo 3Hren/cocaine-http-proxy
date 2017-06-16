@@ -4,7 +4,7 @@ version = "0.1.1"
 dependencies = [
  "byteorder 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "cocaine 0.2.0",
+ "cocaine 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "console 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.11.0 (git+https://github.com/hyperium/hyper)",
@@ -102,7 +102,8 @@ dependencies = [
 
 [[package]]
 name = "cocaine"
-version = "0.2.0"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -744,6 +745,7 @@ dependencies = [
 "checksum cfg-if 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "d0c47d456a36ebf0536a6705c83c1cbbcb9255fbc1d905a6ded104f479268a29"
 "checksum clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)" = "7db281b0520e97fbd15cd615dcd8f8bcad0c26f5f7d5effe705f090f39e9a758"
 "checksum clicolors-control 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "61bd6bff2f99f947c2dbdc73cd0ebd55d8263b921fd4f68a44598555be49f32b"
+"checksum cocaine 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e0dcc2cd6ac924ee2973033707992ab650f1e49f5d973e9eb2210a5f601a7648"
 "checksum console 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1f1f05827f3c2c60af02bb3318da2125ddc39b1961492ff53d31fecb8c673aad"
 "checksum dtoa 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "80c8b71fd71146990a9742fc06dcbbde19161a267e0ad4e572c35162f4578c90"
 "checksum either 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
