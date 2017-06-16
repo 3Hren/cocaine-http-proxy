@@ -468,7 +468,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::BadRequest, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#,
             str::from_utf8(body.as_ref()).unwrap());
@@ -491,7 +491,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request"},"id":null}"#,
             str::from_utf8(body.as_ref()).unwrap());
@@ -517,7 +517,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::BadRequest, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#,
         str::from_utf8(body.as_ref()).unwrap());
@@ -540,7 +540,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request"},"id":null}"#,
         str::from_utf8(body.as_ref()).unwrap());
@@ -563,7 +563,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request"},"id":null}"#,
         str::from_utf8(body.as_ref()).unwrap());
@@ -586,7 +586,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(&format!("[{},{},{}]",
             r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request"},"id":null}"#,
@@ -613,7 +613,7 @@ mod test {
         let res = future.wait().unwrap();
 
         assert_eq!(StatusCode::Ok, res.status());
-        let body = res.body().concat().wait().unwrap();
+        let body = res.body().concat2().wait().unwrap();
 
         assert_eq!(r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Invalid method format"},"id":1}"#,
         str::from_utf8(body.as_ref()).unwrap());
