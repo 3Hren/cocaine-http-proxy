@@ -185,6 +185,11 @@ impl TimeoutsConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+struct LoadTestingConfig {
+    enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     network: NetworkConfig,
     threads: Option<usize>,
@@ -196,6 +201,7 @@ pub struct Config {
     tracing: TracingConfig,
     timeout: u64,
     timeouts: TimeoutsConfig,
+    load_testing: Option<LoadTestingConfig>,
 }
 
 impl Config {
@@ -264,5 +270,10 @@ impl Config {
 
     pub fn timeouts(&self) -> &TimeoutsConfig {
         &self.timeouts
+    }
+
+    /// Returns `true` when a load testing plugin is enabled.
+    pub fn is_load_testing_enabled(&self) -> bool {
+        self.load_testing.as_ref().map(|v| v.enabled).unwrap_or(false)
     }
 }
