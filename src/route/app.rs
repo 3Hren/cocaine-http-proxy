@@ -199,9 +199,9 @@ fn serialize_version<S>(version: &HttpVersion, se: S) -> Result<S::Ok, S::Error>
     where S: Serializer
 {
     let v = if let &HttpVersion::Http11 = version {
-        "1"
+        "1.1"
     } else {
-        "0"
+        "1.0"
     };
 
     se.serialize_str(v)
