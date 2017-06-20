@@ -497,3 +497,22 @@ fn test_request_id_header_err() {
     assert!(XRequestId::parse_header(&Raw::from("0x42")).is_err());
     assert!(XRequestId::parse_header(&Raw::from("damn")).is_err());
 }
+
+#[cfg(test)]
+mod test {
+    use hyper::HttpVersion;
+    use serde_json::Serializer;
+
+    use super::serialize_version;
+
+    #[test]
+    fn test_serialize_version() {
+        let mut se = Serializer::new(Vec::new());
+        serialize_version(&HttpVersion::Http10, &mut se).unwrap();
+        assert_eq!(&b"\"1.0\""[..], &se.into_inner()[..]);
+
+        let mut se = Serializer::new(Vec::new());
+        serialize_version(&HttpVersion::Http11, &mut se).unwrap();
+        assert_eq!(&b"\"1.1\""[..], &se.into_inner()[..]);
+    }
+}
