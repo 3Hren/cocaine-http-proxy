@@ -222,7 +222,11 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     router.add(Arc::new(AppRoute::new(dispatch.clone(), logging.access().clone())
         .with_tracing_header(config.tracing().header().to_owned())));
     router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().clone())));
-    router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
+
+    if config.is_load_testing_enabled() {
+        router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
+        cocaine_log!(logging.common(), Severity::Debug, "enabled performance measuring route");
+    }
 
     let factory = ProxyServiceFactoryFactory::new(
         dispatch.into_senders(),

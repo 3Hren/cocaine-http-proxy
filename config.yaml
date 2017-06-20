@@ -89,3 +89,11 @@ pool:
   services:
     echo:
       limit: 4
+
+# Optional load testing plugin.
+# When activated, adds a terminal route to the end of routing list, which
+# accepts all requests and performs request to the Geobase service. Used mainly
+# for performance measuring.
+# May be completely omitted.
+load_testing:
+  enabled: false
