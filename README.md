@@ -74,9 +74,11 @@ esafronov@local:~$ curl http://localhost:8080/ -H"X-Cocaine-JSON-RPC: 1" -d '{"j
 ...
 
 ### Examples
+...
 
-#### Planning
-- [ ] Server back-pressure.
+### Versioning
+
+This project adheres to [Semantic Versioning](http://semver.org/).
 
 [rmp]: https://github.com/3Hren/msgpack-rust
 [cocaine-framework-rust]: https://github.com/3Hren/cocaine-framework-rust
