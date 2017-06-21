@@ -109,169 +109,95 @@ mod test {
 
     #[test]
     fn ewma1() {
-        let mut e = EWMA::new(1f64);
-        e.update(3);
-        e.tick();
+        let mut ewma = EWMA::new(1f64);
+        ewma.update(3);
+        ewma.tick();
 
-        let r: f64;
+        assert_eq!(0.6f64, ewma.rate());
 
-        // initial
-        r = e.rate();
-        assert_eq!(r, 0.6f64);
+        // Expected values after 1..15 minutes.
+        let expected = [
+            0.22072766470286553f64,
+            0.08120116994196772f64,
+            0.029872241020718428f64,
+            0.01098938333324054f64,
+            0.004042768199451294f64,
+            0.0014872513059998212f64,
+            0.0005471291793327122f64,
+            0.00020127757674150815f64,
+            7.404588245200814e-05f64,
+            2.7239957857491083e-05f64,
+            1.0021020474147462e-05f64,
+            3.6865274119969525e-06f64,
+            1.3561976441886433e-06f64,
+            4.989172314621449e-07f64,
+            1.8354139230109722e-07f64,
+        ];
 
-        // 1 minute
-        assert_eq!(within(&mut e, 0.22072766470286553f64), true);
-
-        // 2 minute
-        assert_eq!(within(&mut e, 0.08120116994196772f64), true);
-
-        // 3 minute
-        assert_eq!(within(&mut e, 0.029872241020718428f64), true);
-
-        // 4 minute
-        assert_eq!(within(&mut e, 0.01098938333324054f64), true);
-
-        // 5 minute
-        assert_eq!(within(&mut e, 0.004042768199451294f64), true);
-
-        // 6 minute
-        assert_eq!(within(&mut e, 0.0014872513059998212f64), true);
-
-        // 7 minute
-        assert_eq!(within(&mut e, 0.0005471291793327122f64), true);
-
-        // 8 minute
-        assert_eq!(within(&mut e, 0.00020127757674150815f64), true);
-
-        // 9 minute
-        assert_eq!(within(&mut e, 7.404588245200814e-05f64), true);
-
-        // 10 minute
-        assert_eq!(within(&mut e, 2.7239957857491083e-05f64), true);
-
-        // 11 minute
-        assert_eq!(within(&mut e, 1.0021020474147462e-05f64), true);
-
-        // 12 minute
-        assert_eq!(within(&mut e, 3.6865274119969525e-06f64), true);
-
-        // 13 minute
-        assert_eq!(within(&mut e, 1.3561976441886433e-06f64), true);
-
-        // 14 minute
-        assert_eq!(within(&mut e, 4.989172314621449e-07f64), true);
-
-        // 15 minute
-        assert_eq!(within(&mut e, 1.8354139230109722e-07f64), true);
+        for ex in &expected {
+            assert_eq!(within(&mut ewma, *ex), true);
+        }
     }
 
     #[test]
     fn ewma5() {
-        let mut e = EWMA::new(5f64);
-        e.update(3);
-        e.tick();
+        let mut ewma = EWMA::new(5f64);
+        ewma.update(3);
+        ewma.tick();
 
-        let r: f64 = e.rate();
-        assert_eq!(r, 0.6f64);
+        assert_eq!(0.6f64, ewma.rate());
 
-        // 1 minute
-        assert_eq!(within(&mut e, 0.49123845184678905f64), true);
+        let expected = [
+            0.49123845184678905f64,
+            0.4021920276213837f64,
+            0.32928698165641596f64,
+            0.269597378470333f64,
+            0.2207276647028654f64,
+            0.18071652714732128f64,
+            0.14795817836496392f64,
+            0.12113791079679326f64,
+            0.09917933293295193f64,
+            0.08120116994196763f64,
+            0.06648189501740036,
+            0.05443077197364752f64,
+            0.04456414692860035f64,
+            0.03648603757513079f64,
+            0.0298722410207183831020718428f64,
+        ];
 
-        // 2 minute
-        assert_eq!(within(&mut e, 0.4021920276213837f64), true);
-
-        // 3 minute
-        assert_eq!(within(&mut e, 0.32928698165641596f64), true);
-
-        // 4 minute
-        assert_eq!(within(&mut e, 0.269597378470333f64), true);
-
-        // 5 minute
-        assert_eq!(within(&mut e, 0.2207276647028654f64), true);
-
-        // 6 minute
-        assert_eq!(within(&mut e, 0.18071652714732128f64), true);
-
-        // 7 minute
-        assert_eq!(within(&mut e, 0.14795817836496392f64), true);
-
-        // 8 minute
-        assert_eq!(within(&mut e, 0.12113791079679326f64), true);
-
-        // 9 minute
-        assert_eq!(within(&mut e, 0.09917933293295193f64), true);
-
-        // 10 minute
-        assert_eq!(within(&mut e, 0.08120116994196763f64), true);
-
-        // 11 minute
-        assert_eq!(within(&mut e, 0.06648189501740036), true);
-
-        // 12 minute
-        assert_eq!(within(&mut e, 0.05443077197364752f64), true);
-
-        // 13 minute
-        assert_eq!(within(&mut e, 0.04456414692860035f64), true);
-
-        // 14 minute
-        assert_eq!(within(&mut e, 0.03648603757513079f64), true);
-
-        // 15 minute
-        assert_eq!(within(&mut e, 0.0298722410207183831020718428f64), true);
+        for ex in &expected {
+            assert_eq!(within(&mut ewma, *ex), true);
+        }
     }
 
     #[test]
     fn ewma15() {
-        let mut e = EWMA::new(15f64);
-        e.update(3);
-        e.tick();
+        let mut ewma = EWMA::new(15f64);
+        ewma.update(3);
+        ewma.tick();
 
-        let r: f64 = e.rate();
-        assert_eq!(r, 0.6f64);
+        assert_eq!(0.6f64, ewma.rate());
 
-        // 1 minute
-        assert_eq!(within(&mut e, 0.5613041910189706f64), true);
+        let expected = [
+            0.5613041910189706f64,
+            0.5251039914257684f64,
+            0.4912384518467888184678905f64,
+            0.459557003018789f64,
+            0.4299187863442732f64,
+            0.4021920276213831f64,
+            0.37625345116383313f64,
+            0.3519877317060185f64,
+            0.3292869816564153165641596f64,
+            0.3080502714195546f64,
+            0.2881831806538789f64,
+            0.26959737847033216f64,
+            0.2522102307052083f64,
+            0.23594443252115815f64,
+            0.2207276647028646247028654470286553f64,
+        ];
 
-        // 2 minute
-        assert_eq!(within(&mut e, 0.5251039914257684f64), true);
-
-        // 3 minute
-        assert_eq!(within(&mut e, 0.4912384518467888184678905f64), true);
-
-        // 4 minute
-        assert_eq!(within(&mut e, 0.459557003018789f64), true);
-
-        // 5 minute
-        assert_eq!(within(&mut e, 0.4299187863442732f64), true);
-
-        // 6 minute
-        assert_eq!(within(&mut e, 0.4021920276213831f64), true);
-
-        // 7 minute
-        assert_eq!(within(&mut e, 0.37625345116383313f64), true);
-
-        // 8 minute
-        assert_eq!(within(&mut e, 0.3519877317060185f64), true);
-
-        // 9 minute
-        assert_eq!(within(&mut e, 0.3292869816564153165641596f64), true);
-
-        // 10 minute
-        assert_eq!(within(&mut e, 0.3080502714195546f64), true);
-
-        // 11 minute
-        assert_eq!(within(&mut e, 0.2881831806538789f64), true);
-
-        // 12 minute
-        assert_eq!(within(&mut e, 0.26959737847033216f64), true);
-
-        // 13 minute
-        assert_eq!(within(&mut e, 0.2522102307052083f64), true);
-
-        // 14 minute
-        assert_eq!(within(&mut e, 0.23594443252115815f64), true);
-
-        // 15 minute
-        assert_eq!(within(&mut e, 0.2207276647028646247028654470286553f64), true);
+        for ex in &expected {
+            assert_eq!(within(&mut ewma, *ex), true);
+        }
     }
 }
