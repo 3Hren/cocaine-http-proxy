@@ -36,7 +36,23 @@ Backed with [Cocaine Framework Rust][cocaine-framework-rust] and [MessagePack][r
 ...
 
 ##### Metrics
-...
+The proxy collects various metrics during execution and is able to provide them through monitoring server.
+
+```bash
+esafronov@local:~$ curl localhost:10000/metrics | python -mjson.tool
+{
+    "connections": {
+        "accepted": 1681,
+        "active": 256
+    },
+    "requests": {
+        "count": 57981507,
+        "m01rate": 227871.29106938263,
+        "m05rate": 141047.39695553246,
+        "m15rate": 90542.77725215351
+    }
+}
+```
 
 ##### Tracing
 The proxy is aware of Google Dapper tracing mechanism. Each request is marked with three special internal headers: **trace_id**, **span_id** and **parent_id**, which are transported with it, allowing to build full tracing path to ease debugging.
