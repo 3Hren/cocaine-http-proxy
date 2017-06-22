@@ -185,6 +185,27 @@ impl TimeoutsConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AuthConfig {
+    service: String,
+    client_id: u32,
+    client_secret: String,
+}
+
+impl AuthConfig {
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    pub fn client_id(&self) -> u32 {
+        self.client_id
+    }
+
+    pub fn client_secret(&self) -> &str {
+        &self.client_secret
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct LoadTestingConfig {
     enabled: bool,
 }
@@ -201,6 +222,7 @@ pub struct Config {
     tracing: TracingConfig,
     timeout: u64,
     timeouts: TimeoutsConfig,
+    auth: AuthConfig,
     load_testing: Option<LoadTestingConfig>,
 }
 
@@ -270,6 +292,11 @@ impl Config {
 
     pub fn timeouts(&self) -> &TimeoutsConfig {
         &self.timeouts
+    }
+
+    /// Returns authorization settings.
+    pub fn auth(&self) -> &AuthConfig {
+        &self.auth
     }
 
     /// Returns `true` when a load testing plugin is enabled.

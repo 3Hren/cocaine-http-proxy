@@ -13,9 +13,11 @@ use tokio_core::reactor::Handle;
 use uuid::Uuid;
 
 use cocaine::{Error, Service};
+use cocaine::hpack::Header;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
+use cocaine::service::tvm::{Grant, Tvm};
 use cocaine::service::unicorn::{Close, Unicorn, Version};
 
 use config::{Config, PoolConfig, ServicePoolConfig};
@@ -425,9 +427,48 @@ pub struct SubscribeTask<F> {
     log: Logger,
 }
 
-pub struct SubscribeAction<F> {
+pub trait Factory {
+    type Item;
+    type Error;
+    type Future: Future<Item = Self::Item, Error = Self::Error>;
+
+    fn create(&mut self) -> Self::Future;
+}
+
+#[derive(Clone, Debug)]
+pub struct TicketFactory {
+    tvm: Tvm,
+    client_id: u32,
+    client_secret: String,
+    grant: Grant,
+}
+
+impl TicketFactory {
+    pub fn new(tvm: Tvm, client_id: u32, client_secret: String, grant: Grant) -> Self {
+        Self {
+            tvm: tvm,
+            client_id: client_id,
+            client_secret: client_secret,
+            grant: grant,
+        }
+    }
+}
+
+impl Factory for TicketFactory {
+    type Item = String;
+    type Error = Error;
+    type Future = Box<Future<Item = Self::Item, Error = Error> + Send>;
+
+    fn create(&mut self) -> Self::Future {
+        self.tvm.ticket(self.client_id, &self.client_secret, self.grant.clone()).boxed()
+    }
+}
+
+pub struct SubscribeAction<T, F> {
     /// Path subscribed on.
     path: String,
+    /// Authorization ticket factory.
+    tm: T,
     /// Unicorn service.
     unicorn: Unicorn,
     /// Callback.
@@ -436,12 +477,13 @@ pub struct SubscribeAction<F> {
     log: Logger,
 }
 
-impl<F> SubscribeAction<F>
+impl<T, F> SubscribeAction<T, F>
     where F: Fn(HashMap<String, f64>) + Clone
 {
-    pub fn new(path: String, unicorn: Unicorn, callback: F, log: Logger) -> Self {
+    pub fn new(path: String, tm: T, unicorn: Unicorn, callback: F, log: Logger) -> Self {
         Self {
             path: path,
+            tm: tm,
             unicorn: unicorn,
             callback: callback,
             log: log,
@@ -449,13 +491,28 @@ impl<F> SubscribeAction<F>
     }
 }
 
-impl<F> Action for SubscribeAction<F>
-    where F: Fn(HashMap<String, f64>) + Clone
+impl<T, F, U> Action for SubscribeAction<T, F>
+where
+    // TODO: Looks creepy, refactor somehow.
+    T: Factory<Item = String, Error = Error, Future = U>,
+    F: Fn(HashMap<String, f64>) + Clone,
+    U: Future<Item = String, Error = Error> + Send + 'static
 {
     type Future = SubscribeTask<F>;
 
     fn run(&mut self) -> Self::Future {
-        let future = Box::new(self.unicorn.subscribe(self.path.clone()));
+        let unicorn = self.unicorn.clone();
+        let path = self.path.clone();
+
+        let future = self.tm.create().and_then(move |ticket| {
+            let auth = Header::new(
+                // TODO: Use hardcoded names.
+                "authorization".as_bytes(),
+                format!("TVM {}", ticket).into_bytes()
+            );
+
+            Box::new(unicorn.subscribe(path, Some(vec![auth])))
+        });
 
         SubscribeTask {
             path: self.path.clone(),

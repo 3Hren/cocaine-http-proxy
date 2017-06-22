@@ -68,12 +68,13 @@ use serde::ser::SerializeMap;
 
 use cocaine::{Core, ServiceBuilder};
 use cocaine::logging::Severity;
-use cocaine::service::{Locator, Unicorn};
+use cocaine::service::{Locator, Tvm, Unicorn};
+use cocaine::service::tvm::Grant;
 
 use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
 use self::logging::{Loggers};
-use self::pool::{Event, EventDispatch, RoutingGroupsAction, SubscribeAction};
+use self::pool::{Event, EventDispatch, RoutingGroupsAction, SubscribeAction, TicketFactory};
 use self::retry::Retry;
 use self::route::{AppRoute, JsonRpc, PerfRoute, Router};
 use self::server::{ServerConfig, ServerGroup};
@@ -158,6 +159,10 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
 
+            let tvm = ServiceBuilder::new(cfg.auth().service().to_owned())
+                .locator_addrs(locator_addrs.clone())
+                .build(&core.handle());
+
             let locator = ServiceBuilder::new(DEFAULT_LOCATOR_NAME)
                 .locator_addrs(locator_addrs.clone())
                 .build(&core.handle());
@@ -182,9 +187,17 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
                 }
             };
 
+            let tm = TicketFactory::new(
+                Tvm::new(tvm),
+                cfg.auth().client_id(),
+                cfg.auth().client_secret().to_owned(),
+                Grant::ClientCredentials
+            );
+
             let tracing = {
                 let action = SubscribeAction::new(
                     cfg.tracing().path().into(),
+                    tm.clone(),
                     Unicorn::new(unicorn.clone()),
                     &on_tracing,
                     log.clone()
@@ -204,6 +217,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
             let timeouts = {
                 let action = SubscribeAction::new(
                     cfg.timeouts().path().into(),
+                    tm,
                     Unicorn::new(unicorn.clone()),
                     &on_timeouts,
                     log.clone()

@@ -97,3 +97,12 @@ pool:
 # May be completely omitted.
 load_testing:
   enabled: false
+
+# Authorization settings.
+auth:
+  # Authorization service name.
+  service: tvm
+  # Client identifier.
+  client_id: 200
+  # Client secret to exchange for a token.
+  client_secret: ABCDEFGabcdefg123456789
