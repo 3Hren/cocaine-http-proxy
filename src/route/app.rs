@@ -301,6 +301,10 @@ impl AppWithSafeRetry {
                     headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 
+                if let Some(timeout) = settings.timeout {
+                    headers.push(hpack::Header::new(&b"request_timeout"[..], format!("{}", timeout).into_bytes()));
+                }
+
                 let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {
                     tx: tx,
                     body: None,

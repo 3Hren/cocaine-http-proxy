@@ -26,7 +26,7 @@ use retry::Action;
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     pub verbose: bool,
-//    timeout: f64,
+    pub timeout: Option<f64>,
 }
 
 pub enum Event {
@@ -287,7 +287,8 @@ impl Future for PoolTask {
                     match event {
                         Event::Service { name, func } => {
                             let settings = Settings {
-                                verbose: self.tracing.calculate_trace_bit(&name)
+                                verbose: self.tracing.calculate_trace_bit(&name),
+                                timeout: self.timeouts.get(&name).map(|v| *v).clone()
                             };
 
                             // Select the next service that is not reconnecting right now.
