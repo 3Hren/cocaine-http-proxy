@@ -71,9 +71,9 @@ use cocaine::logging::Severity;
 use cocaine::service::{Locator, Tvm, Unicorn};
 use cocaine::service::tvm::Grant;
 
-use self::metrics::{Count, Counter, Meter, RateMeter};
 pub use self::config::Config;
-use self::logging::{Loggers};
+use self::logging::Loggers;
+use self::metrics::{Count, Counter, Meter, RateMeter};
 use self::pool::{Event, EventDispatch, RoutingGroupsAction, SubscribeAction, TicketFactory};
 use self::retry::Retry;
 use self::route::{AppRoute, JsonRpc, PerfRoute, Router};
