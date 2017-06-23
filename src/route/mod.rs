@@ -14,6 +14,11 @@ mod app;
 mod jsonrpc;
 mod perf;
 
+/// Request matching.
+///
+/// This enum represents a result of HTTP request matching over a number of routes. If a route
+/// can handle the request it consumes it, returning `Some` value with a future, otherwise it must
+/// return request back using `None` variant.
 #[derive(Debug)]
 pub enum Match<F> {
     /// Successfully consumed a `Request`, yielding a `Future`.
