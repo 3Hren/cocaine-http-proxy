@@ -73,7 +73,8 @@ impl<L: Log> AccessLogger<L> {
         let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
 
         cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", elapsed_ms; {
-            request_id: trace,
+            request_id: format!("{:016x}", trace),
+            trace_id: trace,
             duration: elapsed_ms / 1000.0,
             method: self.method,
             path: self.path,
