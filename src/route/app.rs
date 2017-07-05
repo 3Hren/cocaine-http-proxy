@@ -178,7 +178,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
 struct RequestMeta {
     #[serde(serialize_with = "serialize_method")]
     method: Method,
-    path: String,
+    uri: String,
     #[serde(serialize_with = "serialize_version")]
     version: HttpVersion,
     headers: Vec<(String, String)>,
@@ -231,7 +231,8 @@ impl AppRequest {
         let frame = RequestMeta {
             method: req.method().clone(),
             version: req.version(),
-            path: req.path().into(),
+            // TODO: Test that uri is sent properly (previously only path was sent).
+            uri: req.uri().to_string(),
             headers: headers,
             body: Vec::new(),
         };
