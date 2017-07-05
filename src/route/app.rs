@@ -506,6 +506,13 @@ fn test_request_id_header_offset() {
 }
 
 #[test]
+fn test_request_id_header_real() {
+    let header = XRequestId::parse_header(&Raw::from("fc1d162f7797fba1")).unwrap();
+    let value: u64 = header.into();
+    assert_eq!(18166700865008171937, value);
+}
+
+#[test]
 fn test_request_id_header_err() {
     assert!(XRequestId::parse_header(&Raw::from("")).is_err());
     assert!(XRequestId::parse_header(&Raw::from("0x42")).is_err());
