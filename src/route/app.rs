@@ -461,7 +461,6 @@ impl Dispatch for AppReadDispatch {
                 let body = err.to_string();
                 let body_len = body.len() as u64;
 
-                // TODO: If service is not available - write 503 (or other custom code).
                 let res = Response::new()
                     .with_status(StatusCode::InternalServerError)
                     .with_body(body);
@@ -475,8 +474,18 @@ impl Dispatch for AppReadDispatch {
         let body = err.to_string();
         let body_len = body.as_bytes().len() as u64;
 
+        let status = if let cocaine::Error::Service(ref err) = *err {
+            if err.category() == 10 && err.code() == 1 {
+                StatusCode::ServiceUnavailable
+            } else {
+                StatusCode::InternalServerError
+            }
+        } else {
+            StatusCode::InternalServerError
+        };
+
         let res = Response::new()
-            .with_status(StatusCode::InternalServerError)
+            .with_status(status)
             .with_body(body);
         drop(self.tx.send(Some((res, body_len))));
     }
