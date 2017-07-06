@@ -461,7 +461,7 @@ impl Factory for TicketFactory {
     type Future = Box<Future<Item = Self::Item, Error = Error> + Send>;
 
     fn create(&mut self) -> Self::Future {
-        self.tvm.ticket(self.client_id, &self.client_secret, self.grant.clone()).boxed()
+        self.tvm.ticket(self.client_id, &self.client_secret, &self.grant).boxed()
     }
 }
 
