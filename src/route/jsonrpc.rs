@@ -92,8 +92,8 @@ impl<L: Log> JsonRpc<L> {
     }
 }
 
-fn parse_method(method: String) -> Result<(String, String), Error> {
-    let mut parts = method.as_str().splitn(2, '.').collect::<Vec<&str>>();
+fn parse_method(method: &str) -> Result<(String, String), Error> {
+    let mut parts = method.splitn(2, '.').collect::<Vec<&str>>();
     if parts.len() == 2 {
         let event = parts.pop().unwrap();
         let service = parts.pop().unwrap();
@@ -181,7 +181,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
         match call {
             Call::MethodCall(call) => {
                 let MethodCall { method, params, id, .. } = call;
-                match parse_method(method) {
+                match parse_method(&method) {
                     Ok((service, event)) => {
                         let (params, chunks) = match params {
                             Some(Params::Array(args)) => (Some(args), None),

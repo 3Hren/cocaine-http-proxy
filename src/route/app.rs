@@ -209,10 +209,10 @@ fn serialize_version<S>(version: &HttpVersion, se: S) -> Result<S::Ok, S::Error>
 }
 
 #[inline]
-fn serialize_body<S>(body: &Vec<u8>, se: S) -> Result<S::Ok, S::Error>
+fn serialize_body<S>(body: &[u8], se: S) -> Result<S::Ok, S::Error>
     where S: Serializer
 {
-    se.serialize_str(& unsafe { str::from_utf8_unchecked(body) })
+    se.serialize_str(unsafe { str::from_utf8_unchecked(body) })
 }
 
 #[derive(Debug, Deserialize)]
