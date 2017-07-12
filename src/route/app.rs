@@ -184,6 +184,7 @@ struct RequestMeta {
     headers: Vec<(String, String)>,
     /// HTTP body. May be empty either when there is no body in the request or if it is transmitted
     /// later.
+    #[serde(serialize_with = "serialize_body")]
     body: Vec<u8>,
 }
 
@@ -205,6 +206,13 @@ fn serialize_version<S>(version: &HttpVersion, se: S) -> Result<S::Ok, S::Error>
     };
 
     se.serialize_str(v)
+}
+
+#[inline]
+fn serialize_body<S>(body: &Vec<u8>, se: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    se.serialize_str(& unsafe { str::from_utf8_unchecked(body) })
 }
 
 #[derive(Debug, Deserialize)]
