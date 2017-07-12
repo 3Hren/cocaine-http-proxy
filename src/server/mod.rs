@@ -161,7 +161,7 @@ pub trait GodFather {
 
 /// Default Godfather implementation that names all threads with "worker X" prefix where "X" - is
 /// an integral index.
-struct DefaultGodFather;
+pub struct DefaultGodFather;
 
 impl GodFather for DefaultGodFather {
     fn name(&self, id: usize) -> String {

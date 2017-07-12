@@ -1,6 +1,6 @@
 [package]
 name = "cocaine-http-proxy"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Evgeny Safronov <division494@gmail.com>"]
 license = "MIT"
 description = "HTTP proxy for Cocaine APE Cloud"
@@ -32,7 +32,7 @@ hyper = "0.11"
 console = "0.3"
 
 cocaine = "0.5"
-rmp-serde = "0.13.1"
+rmp-serde = "0.13.3"
 rmpv = { version = "0.4", features = ["with-serde"] }
 
 [profile.dev]
