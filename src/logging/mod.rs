@@ -34,8 +34,10 @@ impl<'a> From<&'a LoggingConfig> for Loggers {
         };
 
         let common = factory(config.common());
-        let access = if config.common().name() == config.access().name() {
-            // Do not create a separate logger if they names are equal.
+        let access = if config.common().name() == config.access().name() &&
+            config.common().source() == config.access().source()
+        {
+            // Do not create a separate logger if they both names and sources are equal.
             common.clone()
         } else {
             factory(config.access())
