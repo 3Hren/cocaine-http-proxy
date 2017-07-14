@@ -24,7 +24,7 @@
 //! - [ ] check whether the proxy outlives runtime restarts.
 //! - [ ] optional rate limiter (for image processing apps overload protection).
 
-#![feature(box_syntax, fnbox, integer_atomics)]
+#![feature(box_syntax, fnbox, integer_atomics, never_type)]
 
 extern crate byteorder;
 #[macro_use]
@@ -84,6 +84,7 @@ use self::service::monitor::MonitorServiceFactoryFactory;
 mod config;
 mod logging;
 mod metrics;
+mod net;
 mod pool;
 mod retry;
 pub mod route;
@@ -258,7 +259,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         .godfather(|id| format!("monitor {:02}", id));
 
     cocaine_log!(logging.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
-    ServerGroup::new()?
+    ServerGroup::new(logging.common().clone())?
         .expose(proxy_cfg, factory)?
         .expose(monitoring_cfg, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
         .run()?;

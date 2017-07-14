@@ -1,13 +1,15 @@
 //! HTTP Server
 
 use std::cell::RefCell;
-use std::io::{self};
+use std::io;
 use std::net::{self, SocketAddr};
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use std::os::unix::io::{AsRawFd, FromRawFd};
+
+use cocaine::logging::{Logger, Severity};
 
 use futures::{future, Async, Future, Poll, Stream};
 use futures::sync::mpsc;
@@ -25,6 +27,7 @@ use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tokio_service::Service;
 
+use net::Incoming;
 use service::{ServiceFactory, ServiceFactorySpawn};
 
 const DEFAULT_NUM_THREADS: usize = 1;
@@ -112,15 +115,17 @@ struct HttpService<T> {
     handle: Handle,
     protocol: Http,
     factory: T,
+    log: Logger,
 }
 
 impl<T> HttpService<T> {
-    fn new(rx: mpsc::UnboundedReceiver<(net::TcpStream, SocketAddr)>, handle: Handle, factory: T) -> Self {
+    fn new(rx: mpsc::UnboundedReceiver<(net::TcpStream, SocketAddr)>, handle: Handle, factory: T, log: Logger) -> Self {
         Self {
             rx: rx,
             handle: handle,
             protocol: Http::new(),
             factory: factory,
+            log: log,
         }
     }
 }
@@ -135,8 +140,20 @@ impl<T: ServiceFactory<Request=Request, Response=Response, Error=hyper::Error>> 
         loop {
             match self.rx.poll() {
                 Ok(Async::Ready(Some((sock, addr)))) => {
-                    let sock = TcpStream::from_stream(sock, &self.handle)?;
-                    let service = self.factory.create_service(Some(addr))?;
+                    let sock = match TcpStream::from_stream(sock, &self.handle) {
+                        Ok(sock) => sock,
+                        Err(err) => {
+                            cocaine_log!(self.log, Severity::Error, "failed to create socket: {}", err);
+                            break;
+                        }
+                    };
+                    let service = match self.factory.create_service(Some(addr)) {
+                        Ok(sock) => sock,
+                        Err(err) => {
+                            cocaine_log!(self.log, Severity::Error, "failed to create HTTP handler: {}", err);
+                            break;
+                        }
+                    };
                     self.protocol.bind_connection(&self.handle, sock, addr, service);
                 }
                 Ok(Async::NotReady) => {
@@ -236,15 +253,17 @@ pub struct ServerGroup {
     core: Core,
     servers: Vec<(TcpListener, Vec<mpsc::UnboundedSender<(net::TcpStream, SocketAddr)>>)>,
     threads: Vec<JoinHandle<Result<(), io::Error>>>,
+    log: Logger,
 }
 
 impl ServerGroup {
-    pub fn new() -> Result<Self, io::Error> {
+    pub fn new(log: Logger) -> Result<Self, io::Error> {
         let core = Core::new()?;
         let result = Self {
             core: core,
             servers: Vec::new(),
             threads: Vec::new(),
+            log: log,
         };
 
         Ok(result)
@@ -265,6 +284,7 @@ impl ServerGroup {
         for id in 0..cfg.num_threads {
             let (tx, rx) = mpsc::unbounded();
             let factory = factory.clone();
+            let log = self.log.clone();
             let thread = thread::Builder::new().name(cfg.godfather.name(id)).spawn(move || {
                 let mut core = Core::new()?;
                 let handle = core.handle();
@@ -281,7 +301,7 @@ impl ServerGroup {
 
                 // This will stop just after listener is stopped, because it polls the connection
                 // receiver.
-                core.run(HttpService::new(rx, handle.clone(), factory))?;
+                core.run(HttpService::new(rx, handle.clone(), factory, log))?;
 
                 let monitor = WaitUntilZero { info: info };
                 let timeout = Timeout::new(Duration::new(5, 0), &handle)?;
@@ -320,12 +340,29 @@ impl ServerGroup {
     pub fn run_until<F>(mut self, cancel: F) -> Result<(), io::Error>
         where F: Future<Item = (), Error = ()>
     {
+        let log = self.log.clone();
         let listeners = self.servers.into_iter().map(|(listener, dispatchers)| {
+            let log = log.clone();
             let mut iter = dispatchers.into_iter().cycle();
-            listener.incoming().for_each(move |(sock, addr)| {
-                let fd = unsafe { libc::dup(sock.as_raw_fd()) };
-                let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
-                iter.next().expect("iterator is infinite").send((cloned, addr)).unwrap();
+            Incoming::new(listener).for_each(move |accept| {
+                match accept {
+                    Ok((sock, addr)) => {
+                        let fd = unsafe { libc::dup(sock.as_raw_fd()) };
+                        if fd >= 0 {
+                            let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
+                            if let Err(..) = iter.next().expect("iterator is infinite").send((cloned, addr)) {
+                                cocaine_log!(log, Severity::Error, "failed to schedule incoming TCP connection from {}", addr);
+                            }
+                        } else {
+                            let err = io::Error::last_os_error();
+                            cocaine_log!(log, Severity::Error, "failed to dup file descriptor: {}", err);
+                        }
+                    }
+                    Err(err) => {
+                        cocaine_log!(log, Severity::Error, "failed to accept TCP connection: {}", err);
+                    }
+                }
+
                 Ok(())
             })
         });
@@ -333,7 +370,8 @@ impl ServerGroup {
         let listen = future::join_all(listeners).and_then(|vec| Ok(drop(vec)));
         let cancel = cancel.then(|result| Ok(drop(result)));
 
-        self.core.run(listen.select(cancel).map_err(|(err, ..)| err))?;
+        self.core.run(listen.select(cancel).map_err(|(err, ..)| err))
+            .expect("receive unreachable error");
 
         for thread in self.threads {
             thread.join().expect("workers should not panic")?;
