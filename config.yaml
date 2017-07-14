@@ -105,4 +105,4 @@ auth:
   # Client identifier.
   client_id: 200
   # Client secret to exchange for a token.
-  client_secret: ABCDEFGabcdefg123456789
+  client_secret: <...>
