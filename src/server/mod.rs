@@ -371,7 +371,7 @@ impl ServerGroup {
         let cancel = cancel.then(|result| Ok(drop(result)));
 
         self.core.run(listen.select(cancel).map_err(|(err, ..)| err))
-            .expect("receive unreachable error");
+            .expect("received unreachable error");
 
         for thread in self.threads {
             thread.join().expect("workers should not panic")?;
