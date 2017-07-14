@@ -22,7 +22,7 @@ use serde::Serializer;
 
 use cocaine::{self, Dispatch, Service};
 use cocaine::hpack;
-use cocaine::logging::Log;
+use cocaine::logging::{Log, Severity};
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
@@ -126,6 +126,14 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             // TODO: Log (debug) trace id source (header or generated).
             rand::random::<u64>()
         };
+
+        cocaine_log!(self.log, Severity::Debug, "processing HTTP request"; {
+            service: service,
+            event: event,
+            trace_id: trace,
+            request_id: format!("{:016x}", trace),
+            request: format!("{:?}", req),
+        });
 
         let log = AccessLogger::new(self.log.clone(), &req);
         let mut app_request = AppRequest::new(service, event, trace, &req);
