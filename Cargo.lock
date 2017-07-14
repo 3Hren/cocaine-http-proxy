@@ -4,7 +4,7 @@ version = "0.3.3"
 dependencies = [
  "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "cocaine 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cocaine 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "console 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "cocaine"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -746,7 +746,7 @@ dependencies = [
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
 "checksum clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)" = "7db281b0520e97fbd15cd615dcd8f8bcad0c26f5f7d5effe705f090f39e9a758"
 "checksum clicolors-control 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "61bd6bff2f99f947c2dbdc73cd0ebd55d8263b921fd4f68a44598555be49f32b"
-"checksum cocaine 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "c1a3744b64b7293c9aec696fc0689a2a653bf75829b8b59983195a8aad2ccd1f"
+"checksum cocaine 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)" = "fbb83942306f8957dd5a28037515201068be481eae3a2b93aacc96d1a906f8d8"
 "checksum console 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1f1f05827f3c2c60af02bb3318da2125ddc39b1961492ff53d31fecb8c673aad"
 "checksum dtoa 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "80c8b71fd71146990a9742fc06dcbbde19161a267e0ad4e572c35162f4578c90"
 "checksum either 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
