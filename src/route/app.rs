@@ -435,7 +435,19 @@ impl Dispatch for AppReadDispatch {
             // TODO: Support chunked transfer encoding.
             Ok(Some(data)) => {
                 if self.body.is_none() {
-                    let meta: ResponseMeta = rmps::from_slice(data.as_bytes()).unwrap();
+                    let meta: ResponseMeta = match rmps::from_slice(data.as_bytes()) {
+                        Ok(meta) => meta,
+                        Err(err) => {
+                            let err = err.to_string();
+                            let body_size = err.len();
+                            let resp = Response::new()
+                                .with_status(StatusCode::InternalServerError)
+                                .with_body(err);
+                            drop(self.tx.send(Some((resp, body_size as u64))));
+                            return None
+                        }
+                    };
+
                     let mut resp = self.response.take().unwrap();
                     resp.set_status(StatusCode::try_from(meta.code as u16).unwrap_or(StatusCode::InternalServerError));
                     for (name, value) in meta.headers {
@@ -452,12 +464,27 @@ impl Dispatch for AppReadDispatch {
                 Some(self)
             }
             Ok(None) => {
-                let body = self.body.take().unwrap();
-                let body_len = body.len() as u64;
+                let (resp, size) = match self.body.take() {
+                    Some(body) => {
+                        let size = body.len();
 
-                let mut res = self.response.take().unwrap();
-                res.set_body(body);
-                drop(self.tx.send(Some((res, body_len))));
+                        let mut resp = self.response.take().unwrap();
+                        resp.set_body(body);
+
+                        (resp, size)
+                    }
+                    None => {
+                        let err = "received `close` event without prior meta info";
+                        let size = err.len();
+                        let resp = Response::new()
+                            .with_status(StatusCode::InternalServerError)
+                            .with_body(err);
+
+                        (resp, size)
+                    }
+                };
+
+                drop(self.tx.send(Some((resp, size as u64))));
                 None
             }
             // TODO: Make names for category and code.
