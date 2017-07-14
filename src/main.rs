@@ -29,7 +29,5 @@ fn main() {
         }
     };
 
-//    let thread = cocaine_http_proxy::util::run_dashboard(config.clone());
     cocaine_http_proxy::run(config).expect("failed to run the server");
-//    thread.join().unwrap().unwrap();
 }
