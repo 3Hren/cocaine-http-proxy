@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::{self, Debug, Formatter};
 use std::fs::File;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
@@ -184,7 +185,7 @@ impl TimeoutsConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct AuthConfig {
     service: String,
     client_id: u32,
@@ -202,6 +203,16 @@ impl AuthConfig {
 
     pub fn client_secret(&self) -> &str {
         &self.client_secret
+    }
+}
+
+impl Debug for AuthConfig {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        fmt.debug_struct("AuthConfig")
+            .field("service", &self.service)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<...>")
+            .finish()
     }
 }
 
