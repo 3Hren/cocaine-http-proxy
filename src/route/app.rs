@@ -33,6 +33,12 @@ header! { (XCocaineService, "X-Cocaine-Service") => [String] }
 header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
 header! { (XPoweredBy, "X-Powered-By") => [String] }
 
+impl Default for XPoweredBy {
+    fn default() -> Self {
+        XPoweredBy(format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct XRequestId(u64);
 
@@ -146,7 +152,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                 AppWithSafeRetry::new(app_request, dispatcher, 3)
             })
             .and_then(move |(mut resp, bytes_sent)| {
-                resp.headers_mut().set(XPoweredBy("Cocaine".into()));
+                resp.headers_mut().set(XPoweredBy::default());
                 log.commit(trace, resp.status().into(), bytes_sent);
                 Ok(resp)
             })
