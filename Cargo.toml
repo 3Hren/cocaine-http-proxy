@@ -30,6 +30,7 @@ tokio-proto = "0.1"
 tokio-service = "0.1"
 hyper = "0.11"
 console = "0.3"
+regex = "0.2"
 
 cocaine = "0.5.3"
 rmp-serde = "0.13.3"

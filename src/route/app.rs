@@ -15,6 +15,8 @@ use hyper::{self, HttpVersion, Method, StatusCode};
 use hyper::header::{self, Header, Raw};
 use hyper::server::{Request, Response};
 
+use regex::Regex;
+
 use rmps;
 use rmpv::ValueRef;
 
@@ -84,6 +86,7 @@ trait Call {
 pub struct AppRoute<L> {
     dispatcher: EventDispatch,
     tracing_header: Cow<'static, str>,
+    regex: Regex,
     log: L,
 }
 
@@ -92,6 +95,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         Self {
             dispatcher: dispatcher,
             tracing_header: XRequestId::header_name().into(),
+            regex: Regex::new("/([^/]*)/([^/?]*)(.*)").expect("wrong URI regex in app route"),
             log: log,
         }
     }
@@ -104,20 +108,36 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
     }
 
     /// Extracts required parameters from the request.
-    fn extract_parameters(req: &Request) -> Option<Result<(String, String), Error>> {
+    fn extract_parameters(&self, req: &Request) -> Option<Result<(String, String, String), Error>> {
         let service = req.headers().get::<XCocaineService>();
         let event = req.headers().get::<XCocaineEvent>();
 
         match (service, event) {
             (Some(service), Some(event)) => {
-                Some(Ok((service.to_string(), event.to_string())))
+                Some(Ok((service.to_string(), event.to_string(), req.uri().to_string())))
             }
             (Some(..), None) | (None, Some(..)) => Some(Err(Error::IncompleteHeadersMatch)),
-            (None, None) => None,
+            (None, None) => {
+                self.regex.captures(req.uri().as_ref()).and_then(|cap| {
+                    match (cap.get(1), cap.get(2), cap.get(3)) {
+                        (Some(service), Some(event), Some(other)) => {
+                            let uri = other.as_str();
+                            let uri = if uri.starts_with("/") {
+                                uri.into()
+                            } else {
+                                format!("/{}", uri)
+                            };
+
+                            Some(Ok((service.as_str().into(), event.as_str().into(), uri)))
+                        }
+                        (..) => None,
+                    }
+                })
+            }
         }
     }
 
-    fn invoke(&self, service: String, event: String, req: Request)
+    fn invoke(&self, service: String, event: String, req: Request, uri: String)
         -> Box<Future<Item = Response, Error = Error>>
     {
         let trace = if let Some(trace) = req.headers().get_raw(&self.tracing_header) {
@@ -142,7 +162,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         });
 
         let log = AccessLogger::new(self.log.clone(), &req);
-        let mut app_request = AppRequest::new(service, event, trace, &req);
+        let mut app_request = AppRequest::new(service, event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
         req.body()
             .concat2()
@@ -164,9 +184,9 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
     type Future = Box<Future<Item = Response, Error = hyper::Error>>;
 
     fn process(&self, req: Request) -> Match<Self::Future> {
-        match Self::extract_parameters(&req) {
-            Some(Ok((service, event))) => {
-                let future = self.invoke(service, event, req).then(|resp| {
+        match self.extract_parameters(&req) {
+            Some(Ok((service, event, uri))) => {
+                let future = self.invoke(service, event, req, uri).then(|resp| {
                     resp.or_else(|err| {
                         let resp = Response::new()
                             .with_status(err.code())
@@ -244,7 +264,7 @@ struct AppRequest {
 }
 
 impl AppRequest {
-    fn new(service: String, event: String, trace: u64, req: &Request) -> Self {
+    fn new(service: String, event: String, trace: u64, req: &Request, uri: String) -> Self {
         let headers = req.headers()
             .iter()
             .map(|header| (header.name().to_string(), header.value_string()))
@@ -254,7 +274,7 @@ impl AppRequest {
             method: req.method().clone(),
             version: req.version(),
             // TODO: Test that uri is sent properly (previously only path was sent).
-            uri: req.uri().to_string(),
+            uri: uri,
             headers: headers,
             body: Vec::new(),
         };

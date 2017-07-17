@@ -40,6 +40,7 @@ extern crate log;
 extern crate net2;
 extern crate num_cpus;
 extern crate rand;
+extern crate regex;
 extern crate rmp_serde as rmps;
 extern crate rmpv;
 extern crate serde;
