@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use hyper::Uri;
 use hyper::server::Request;
 
 use cocaine::logging::{Log, Logger, LoggerContext, Severity};
@@ -54,7 +55,7 @@ impl<'a> From<&'a LoggingConfig> for Loggers {
 pub struct AccessLogger<L> {
     birth: Instant,
     method: String,
-    path: String,
+    uri: Uri,
     version: String,
     log: L,
 }
@@ -64,7 +65,7 @@ impl<L: Log> AccessLogger<L> {
         Self {
             birth: Instant::now(),
             method: req.method().as_ref().to_owned(),
-            path: req.path().to_owned(),
+            uri: req.uri().clone(),
             version: format!("{}", req.version()),
             log: log,
         }
@@ -79,7 +80,7 @@ impl<L: Log> AccessLogger<L> {
             trace_id: trace,
             duration: elapsed_ms / 1000.0,
             method: self.method,
-            path: self.path,
+            uri: self.uri.to_string(),
             version: self.version,
             status: status,
             bytes_sent: bytes_sent,
