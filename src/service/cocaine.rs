@@ -35,8 +35,16 @@ impl Service for ProxyService {
     type Future   = Box<Future<Item = Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
-        self.metrics.requests.mark(1);
-        self.router.process(req)
+        let metrics = self.metrics.clone();
+
+        metrics.requests.mark(1);
+        box self.router.process(req).and_then(move |resp| {
+            if resp.status().is_server_error() {
+                metrics.responses.c5xx.add(1);
+            }
+
+            Ok(resp)
+        })
     }
 }
 

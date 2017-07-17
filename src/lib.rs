@@ -126,10 +126,17 @@ fn serialize_meter<S>(meter: &RateMeter, se: S) -> Result<S::Ok, S::Error>
 }
 
 #[derive(Debug, Default, Serialize)]
+struct ResponseMetrics {
+    #[serde(serialize_with = "serialize_counter")]
+    c5xx: Counter,
+}
+
+#[derive(Debug, Default, Serialize)]
 pub struct Metrics {
     connections: ConnectionMetrics,
     #[serde(serialize_with = "serialize_meter")]
     requests: RateMeter,
+    responses: ResponseMetrics,
 }
 
 pub fn run(config: Config) -> Result<(), Box<error::Error>> {
