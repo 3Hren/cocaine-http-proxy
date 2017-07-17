@@ -29,16 +29,25 @@ fn deserialize_from_str<'de, D>(de: D) -> Result<Severity, D::Error>
     Severity::from_str(&s).map_err(de::Error::custom)
 }
 
+fn deserialize_addr<'de, D>(de: D) -> Result<SocketAddr, D::Error>
+    where D: Deserializer<'de>
+{
+    let (addr, port) = Deserialize::deserialize(de)?;
+    let addr = SocketAddr::new(addr, port);
+
+    Ok(addr)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NetworkConfig {
-    addr: (IpAddr, u16),
+    #[serde(deserialize_with = "deserialize_addr")]
+    addr: SocketAddr,
     backlog: i32,
 }
 
 impl NetworkConfig {
     pub fn addr(&self) -> SocketAddr {
-        let (addr, port) = self.addr;
-        SocketAddr::new(addr, port)
+        self.addr
     }
 
     pub fn backlog(&self) -> i32 {
