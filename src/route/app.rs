@@ -109,7 +109,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         Self {
             dispatcher: dispatcher,
             tracing_header: XRequestId::header_name().into(),
-            regex: Regex::new("/([^/]*)/([^/?]*)(.*)").expect("wrong URI regex in app route"),
+            regex: Regex::new("/([^/]*)/([^/?]*)(.*)").expect("invalid URI regex in app route"),
             log: log,
         }
     }
