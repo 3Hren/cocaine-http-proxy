@@ -3,7 +3,6 @@
 extern crate byteorder;
 #[macro_use]
 extern crate cocaine;
-extern crate console;
 extern crate futures;
 #[macro_use]
 extern crate hyper;
@@ -65,7 +64,6 @@ mod retry;
 pub mod route;
 mod server;
 mod service;
-pub mod util;
 
 const DEFAULT_LOCATOR_NAME: &str = "locator";
 const THREAD_NAME_PERIODIC: &str = "periodic";

@@ -31,7 +31,6 @@ tokio-service = "0.1"
 tokio-uds = "0.1"
 # Temporary until zero-sized-chunk-problem lands in crates.io.
 hyper = { git = "https://github.com/hyperium/hyper", rev = "fc5b9cce3176776e4c916cd1b907b1649a538f00" }
-console = "0.3"
 regex = "0.2"
 
 # Temporary for deep debugging.
