@@ -664,3 +664,8 @@ mod test {
         assert_eq!(&b"\"1.1\""[..], &se.into_inner()[..]);
     }
 }
+
+// TODO: Test HEAD responses with body.
+// TODO: Test NoContent responses with body.
+// TODO: Test NotModified responses with body.
+// TODO: Test invalid UTF8 headers in request/response.
