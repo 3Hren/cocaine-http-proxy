@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::str;
 use std::sync::Arc;
 
@@ -71,6 +71,20 @@ impl Header for XRequestId {
 
     fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
         fmt.fmt_line(&format!("{:x}", self.0))
+    }
+}
+
+/// Helper for safe debug `Request` formatting without panicking on errors.
+struct SafeRequestDebug<'a>(&'a Request);
+
+impl<'a> Debug for SafeRequestDebug<'a> {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
+        match write!(fmt, "{:?}", self.0) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                write!(fmt, "failed to format `Request` using Debug trait: {}", err)
+            }
+        }
     }
 }
 
@@ -158,7 +172,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             event: event,
             trace_id: trace,
             request_id: format!("{:016x}", trace),
-            request: format!("{:?}", req),
+            request: format!("{:?}", SafeRequestDebug(&req)),
         });
 
         let log = AccessLogger::new(self.log.clone(), &req);
