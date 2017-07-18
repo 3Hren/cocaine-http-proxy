@@ -1,29 +1,3 @@
-//! Roadmap:
-//! - [x] GET config.
-//! - [x] basic metrics: counters, rates.
-//! - [x] enable application services.
-//! - [x] smart reconnection in the pool.
-//! - [x] RG support for immediate updates.
-//! - [x] unicorn support for tracing.
-//! - [x] unicorn support for timeouts.
-//! - [x] tracing.
-//! - [x] retry policy for applications.
-//! - [x] request timeouts.
-//! - [x] JSON RPC.
-//! - [ ] timeouts.
-//! - [ ] forward Authorization header.
-//! - [ ] chunked transfer encoding.
-//! - [ ] clean code.
-//! - [ ] metrics: histograms.
-//! - [ ] MDS direct.
-//! - [ ] streaming logging through HTTP.
-//! - [ ] plugin system.
-//! - [ ] logging review.
-//! - [ ] support Cocaine authentication.
-//! - [ ] count 2xx, 4xx, 5xx HTTP codes.
-//! - [ ] check whether the proxy outlives runtime restarts.
-//! - [ ] optional rate limiter (for image processing apps overload protection).
-
 #![feature(box_syntax, fnbox, integer_atomics, never_type)]
 
 extern crate byteorder;
