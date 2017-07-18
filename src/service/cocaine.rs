@@ -40,7 +40,7 @@ impl Service for ProxyService {
         metrics.requests.mark(1);
         box self.router.process(req).and_then(move |resp| {
             if resp.status().is_server_error() {
-                metrics.responses.c5xx.add(1);
+                metrics.responses.c5xx.mark(1);
             }
 
             Ok(resp)
