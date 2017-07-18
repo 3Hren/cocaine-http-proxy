@@ -364,6 +364,7 @@ impl AppWithSafeRetry {
 
                 let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {
                     tx: tx,
+                    method: request.frame.method.clone(),
                     body: None,
                     trace: request.trace,
                     response: Some(Response::new()),
@@ -474,6 +475,7 @@ impl error::Error for Error {
 
 struct AppReadDispatch {
     tx: oneshot::Sender<Option<(Response, u64)>>,
+    method: Method,
     body: Option<Vec<u8>>,
     trace: u64,
     response: Option<Response>,
@@ -521,10 +523,42 @@ impl Dispatch for AppReadDispatch {
             Ok(None) => {
                 let (resp, size) = match self.body.take() {
                     Some(body) => {
-                        let size = body.len();
-
+                        use hyper::header::ContentLength;
                         let mut resp = self.response.take().unwrap();
-                        resp.set_body(body);
+
+                        // Special handling for responses with no body.
+                        // See https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html for more.
+                        let size = if self.method == Method::Head {
+                            // We shouldn't remove Content-Length header here, because according to
+                            // RFC: the Content-Length entity-header field indicates the size of the
+                            // entity-body, in decimal number of OCTETs, sent to the recipient or,
+                            // in the case of the HEAD method, the size of the entity-body that
+                            // would have been sent had the request been a GET.
+                            0
+                        } else {
+                            match resp.status() {
+                                StatusCode::NoContent |
+                                StatusCode::NotModified => {
+                                    0
+                                }
+                                _ => {
+                                    let mut has_body = !body.is_empty();
+                                    has_body = has_body & resp.headers().get::<ContentLength>().map(|head| {
+                                        match *head {
+                                            ContentLength(len) => return len > 0,
+                                        }
+                                    }).unwrap_or(true);
+
+                                    if has_body {
+                                        let size = body.len();
+                                        resp.set_body(body);
+                                        size
+                                    } else {
+                                        0
+                                    }
+                                }
+                            }
+                        };
 
                         (resp, size)
                     }
