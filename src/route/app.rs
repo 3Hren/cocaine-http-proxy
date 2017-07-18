@@ -365,6 +365,7 @@ impl AppWithSafeRetry {
                 let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {
                     tx: tx,
                     body: None,
+                    trace: request.trace,
                     response: Some(Response::new()),
                 }).and_then(move |tx| {
                     let buf = rmps::to_vec(&request.frame).unwrap();
@@ -474,6 +475,7 @@ impl error::Error for Error {
 struct AppReadDispatch {
     tx: oneshot::Sender<Option<(Response, u64)>>,
     body: Option<Vec<u8>>,
+    trace: u64,
     response: Option<Response>,
 }
 
@@ -490,14 +492,19 @@ impl Dispatch for AppReadDispatch {
                             let body_size = err.len();
                             let resp = Response::new()
                                 .with_status(StatusCode::InternalServerError)
+                                .with_header(XRequestId(self.trace))
                                 .with_body(err);
                             drop(self.tx.send(Some((resp, body_size as u64))));
                             return None
                         }
                     };
 
+                    let status = StatusCode::try_from(meta.code as u16)
+                        .unwrap_or(StatusCode::InternalServerError);
+
                     let mut resp = self.response.take().unwrap();
-                    resp.set_status(StatusCode::try_from(meta.code as u16).unwrap_or(StatusCode::InternalServerError));
+                    resp.set_status(status);
+                    resp.headers_mut().set(XRequestId(self.trace));
                     for (name, value) in meta.headers {
                         // TODO: Filter headers - https://tools.ietf.org/html/draft-ietf-httpbis-p1-messaging-14#section-7.1.3
                         resp.headers_mut().set_raw(name, value);
@@ -526,6 +533,7 @@ impl Dispatch for AppReadDispatch {
                         let size = err.len();
                         let resp = Response::new()
                             .with_status(StatusCode::InternalServerError)
+                            .with_header(XRequestId(self.trace))
                             .with_body(err);
 
                         (resp, size)
@@ -546,6 +554,7 @@ impl Dispatch for AppReadDispatch {
 
                 let res = Response::new()
                     .with_status(StatusCode::InternalServerError)
+                    .with_header(XRequestId(self.trace))
                     .with_body(body);
                 drop(self.tx.send(Some((res, body_len))));
                 None
@@ -569,6 +578,7 @@ impl Dispatch for AppReadDispatch {
 
         let res = Response::new()
             .with_status(status)
+            .with_header(XRequestId(self.trace))
             .with_body(body);
         drop(self.tx.send(Some((res, body_len))));
     }
