@@ -5,7 +5,22 @@ use futures::{Async, Poll, Stream};
 
 use tokio_core::net::{TcpListener, TcpStream};
 
+/// Byte-oriented stream acceptor.
+pub trait Accept {
+    /// Stream type.
+    type Stream;
+    /// Peer address of accepted byte-oriented stream.
+    type Addr;
+
+    /// Attempt to accept a connection and create a new connected `Stream` with its peer address if
+    /// successful.
+    fn accept(&mut self) -> Result<(Self::Stream, Option<Self::Addr>), Error>;
+}
+
 /// Represents the stream of sockets received from a listener.
+///
+/// This will never be exhausted, even on I/O errors unlike the similar struct in the tokio crate.
+/// Instead it emits a `Result` on each either successful or not accepting.
 pub struct Incoming {
     inner: TcpListener,
 }
