@@ -3,14 +3,16 @@ use std::time::Instant;
 use hyper::Uri;
 use hyper::server::Request;
 
-use cocaine::logging::{Log, Logger, LoggerContext, Severity};
+use cocaine::logging::{Filter, Log, Logger, LoggerContext, Severity};
 
 use config::{LoggingBaseConfig, LoggingConfig};
 
 #[derive(Clone, Debug)]
 pub struct Loggers {
     common: Logger,
+    common_filter: Filter,
     access: Logger,
+    access_filter: Filter,
 }
 
 impl Loggers {
@@ -24,29 +26,41 @@ impl Loggers {
     pub fn access(&self) -> &Logger {
         &self.access
     }
+
+    pub fn common_filter(&self) -> &Filter {
+        &self.common_filter
+    }
+
+    pub fn access_filter(&self) -> &Filter {
+        &self.access_filter
+    }
 }
 
 impl<'a> From<&'a LoggingConfig> for Loggers {
     fn from(config: &'a LoggingConfig) -> Self {
         let factory = |cfg: &LoggingBaseConfig| {
             let ctx = LoggerContext::new(cfg.name().to_owned());
-            ctx.filter().set(cfg.severity().into());
-            ctx.create(cfg.source().to_owned())
+            let filter = ctx.filter();
+            filter.set(cfg.severity().into());
+
+            (ctx.create(cfg.source().to_owned()), filter.clone())
         };
 
-        let common = factory(config.common());
-        let access = if config.common().name() == config.access().name() &&
+        let (common, common_filter) = factory(config.common());
+        let (access, access_filter) = if config.common().name() == config.access().name() &&
             config.common().source() == config.access().source()
         {
             // Do not create a separate logger if they both names and sources are equal.
-            common.clone()
+            (common.clone(), common_filter.clone())
         } else {
             factory(config.access())
         };
 
         Self {
             common: common,
+            common_filter: common_filter,
             access: access,
+            access_filter: access_filter,
         }
     }
 }

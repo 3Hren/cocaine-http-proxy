@@ -238,10 +238,16 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let monitoring_cfg = ServerConfig::new(config.monitoring().addr())
         .godfather(|id| format!("monitor {:02}", id));
 
+    let monitoring = MonitorServiceFactoryFactory::new(
+        Arc::new(config.clone()),
+        Arc::new(logging.clone()),
+        metrics
+    );
+
     cocaine_log!(logging.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
     ServerGroup::new(logging.common().clone())?
         .expose(proxy_cfg, factory)?
-        .expose(monitoring_cfg, MonitorServiceFactoryFactory::new(Arc::new(config), metrics))?
+        .expose(monitoring_cfg, monitoring)?
         .run()?;
 
     thread.join().unwrap()?;
