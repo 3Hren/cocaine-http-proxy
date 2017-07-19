@@ -281,7 +281,15 @@ impl AppRequest {
     fn new(service: String, event: String, trace: u64, req: &Request, uri: String) -> Self {
         let headers = req.headers()
             .iter()
-            .map(|header| (header.name().to_string(), header.value_string()))
+            .map(|header| {
+                let value = header.raw().into_iter().fold(Vec::new(), |mut acc, h| {
+                    acc.extend(h);
+                    acc
+                });
+                let value = unsafe { String::from_utf8_unchecked(value) };
+
+                (header.name().to_string(), value)
+            })
             .collect();
 
         let frame = RequestMeta {
