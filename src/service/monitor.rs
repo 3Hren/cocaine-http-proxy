@@ -73,32 +73,17 @@ enum Error<'a> {
 
 impl<'a> Into<Response> for Error<'a> {
     fn into(self) -> Response {
-        match self {
-            Error::LoggerNotFound(logger) => {
-                let description = format!("Logger `{}` not found", logger);
-                Response::new()
-                    .with_status(StatusCode::BadRequest)
-                    .with_header(ContentType::plaintext())
-                    .with_header(ContentLength(description.len() as u64))
-                    .with_body(description)
-            }
-            Error::SeverityNotInRange(..) => {
-                let description = format!("Severity value must be in [0; 3] range");
-                Response::new()
-                    .with_status(StatusCode::BadRequest)
-                    .with_header(ContentType::plaintext())
-                    .with_header(ContentLength(description.len() as u64))
-                    .with_body(description)
-            }
-            Error::InvalidSeverity => {
-                let description = format!("Severity value must be an integer");
-                Response::new()
-                    .with_status(StatusCode::BadRequest)
-                    .with_header(ContentType::plaintext())
-                    .with_header(ContentLength(description.len() as u64))
-                    .with_body(description)
-            }
-        }
+        let description = match self {
+            Error::LoggerNotFound(logger) => format!("Logger `{}` not found", logger),
+            Error::SeverityNotInRange(..) => format!("Severity value must be in [0; 3] range"),
+            Error::InvalidSeverity => format!("Severity value must be an integer"),
+        };
+
+        Response::new()
+            .with_status(StatusCode::BadRequest)
+            .with_header(ContentType::plaintext())
+            .with_header(ContentLength(description.len() as u64))
+            .with_body(description)
     }
 }
 
