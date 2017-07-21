@@ -54,10 +54,10 @@ impl Route for PerfRoute {
 
         self.dispatcher.send(ev);
 
-        let log = AccessLogger::new(self.log.clone(), &req);
+        let log = AccessLogger::new(self.log.clone(), &req, "geobase".to_owned(), "ip".to_owned(), 0);
         let future = rx.and_then(move |(mut res, bytes_sent)| {
             res.headers_mut().set_raw("X-Powered-By", "Cocaine");
-            log.commit(0, res.status().into(), bytes_sent);
+            log.commit(res.status().into(), bytes_sent, None);
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 

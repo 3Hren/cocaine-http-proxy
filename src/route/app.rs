@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::error;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Display, Formatter};
 use std::str;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ use serde::Serializer;
 
 use cocaine::{self, Dispatch, Service};
 use cocaine::hpack;
-use cocaine::logging::{Log, Severity};
+use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
 use logging::AccessLogger;
@@ -71,20 +71,6 @@ impl Header for XRequestId {
 
     fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
         fmt.fmt_line(&format!("{:x}", self.0))
-    }
-}
-
-/// Helper for safe debug `Request` formatting without panicking on errors.
-struct SafeRequestDebug<'a>(&'a Request);
-
-impl<'a> Debug for SafeRequestDebug<'a> {
-    fn fmt(&self, fmt: &mut Formatter) -> Result<(), fmt::Error> {
-        match write!(fmt, "{:?}", self.0) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                write!(fmt, "failed to format `Request` using Debug trait: {}", err)
-            }
-        }
     }
 }
 
@@ -167,15 +153,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             rand::random::<u64>()
         };
 
-        cocaine_log!(self.log, Severity::Debug, "processing HTTP request"; {
-            service: service,
-            event: event,
-            trace_id: trace,
-            request_id: format!("{:016x}", trace),
-            request: format!("{:?}", SafeRequestDebug(&req)),
-        });
-
-        let log = AccessLogger::new(self.log.clone(), &req);
+        let log = AccessLogger::new(self.log.clone(), &req, service.clone(), event.clone(), trace);
         let mut app_request = AppRequest::new(service, event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
         req.body()
@@ -185,10 +163,18 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                 app_request.set_body(body.to_vec());
                 AppWithSafeRetry::new(app_request, dispatcher, 3)
             })
-            .and_then(move |(mut resp, bytes_sent)| {
-                resp.headers_mut().set(XPoweredBy::default());
-                log.commit(trace, resp.status().into(), bytes_sent);
-                Ok(resp)
+            .then(move |result| {
+                match result {
+                    Ok((mut resp, size)) => {
+                        resp.headers_mut().set(XPoweredBy::default());
+                        log.commit(resp.status(), size, None);
+                        Ok(resp)
+                    }
+                    Err(err) => {
+                        log.commit(StatusCode::InternalServerError, 0, Some(&err));
+                        Err(err)
+                    }
+                }
             })
             .boxed()
     }
