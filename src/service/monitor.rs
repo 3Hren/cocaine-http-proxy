@@ -89,8 +89,8 @@ impl<'a> Into<Response> for Error<'a> {
 
 fn extract_filter<'a>(loggers: &'a Loggers, name: &'a str) -> Result<&'a Filter, Error<'a>> {
     match name {
-        "common" => Ok(loggers.common_filter()),
-        "access" => Ok(loggers.access_filter()),
+        "common" => Ok(loggers.common().filter()),
+        "access" => Ok(loggers.access().filter()),
         name => Err(Error::LoggerNotFound(name).into()),
     }
 }
@@ -107,10 +107,10 @@ impl Service for MonitorService {
             (&Method::Get, "/config") => response_json(&*self.config),
             (&Method::Get, "/metrics") => response_json(&*self.metrics),
             (&Method::Get, "/v1/severity/common") => {
-                response_json(&self.loggers.common_filter().get())
+                response_json(&self.loggers.common().filter().get())
             }
             (&Method::Get, "/v1/severity/access") => {
-                response_json(&self.loggers.access_filter().get())
+                response_json(&self.loggers.access().filter().get())
             }
             (&Method::Put, path) if self.regex.is_match(path) => {
                 match self.regex.captures(path) {

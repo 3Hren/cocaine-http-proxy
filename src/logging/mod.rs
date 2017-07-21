@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Formatter};
+use std::mem;
 use std::time::Instant;
 
 use hyper::{Method, StatusCode, Uri};
@@ -7,62 +8,68 @@ use hyper::server::Request;
 
 use cocaine::logging::{Filter, Log, Logger, LoggerContext, Severity};
 
-use config::{LoggingBaseConfig, LoggingConfig};
+use config::LoggingConfig;
+
+#[derive(Clone, Debug)]
+pub struct Entry {
+    logger: Logger,
+    filter: Filter,
+}
+
+impl Entry {
+    pub fn logger(&self) -> &Logger {
+        &self.logger
+    }
+
+    pub fn filter(&self) -> &Filter {
+        &self.filter
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Loggers {
-    common: Logger,
-    common_filter: Filter,
-    access: Logger,
-    access_filter: Filter,
+    common: Entry,
+    access: Entry
 }
 
 impl Loggers {
-    /// Returns a reference to the common logger that is used for general purpose logging.
-    pub fn common(&self) -> &Logger {
+    /// Returns a reference to the common logger with its filter that is used for general purpose
+    /// logging.
+    pub fn common(&self) -> &Entry {
         &self.common
     }
 
-    /// Returns a reference to the access logger that is used for logging summaries of HTTP
-    /// responses.
-    pub fn access(&self) -> &Logger {
+    /// Returns a reference to the access logger with its filter that is used for logging summaries
+    /// of HTTP responses.
+    pub fn access(&self) -> &Entry {
         &self.access
-    }
-
-    pub fn common_filter(&self) -> &Filter {
-        &self.common_filter
-    }
-
-    pub fn access_filter(&self) -> &Filter {
-        &self.access_filter
     }
 }
 
 impl<'a> From<&'a LoggingConfig> for Loggers {
-    fn from(config: &'a LoggingConfig) -> Self {
-        let factory = |cfg: &LoggingBaseConfig| {
-            let ctx = LoggerContext::new(cfg.name().to_owned());
-            let filter = ctx.filter();
-            filter.set(cfg.severity().into());
-
-            (ctx.create(cfg.source().to_owned()), filter.clone())
+    fn from(cfg: &'a LoggingConfig) -> Self {
+        let mut ctx = LoggerContext::new(cfg.common().name().to_owned());
+        let common = Entry {
+            logger: ctx.create(cfg.common().source().to_owned()),
+            filter: ctx.filter().clone(),
         };
 
-        let (common, common_filter) = factory(config.common());
-        let (access, access_filter) = if config.common().name() == config.access().name() &&
-            config.common().source() == config.access().source()
-        {
-            // Do not create a separate logger if they both names and sources are equal.
-            (common.clone(), common_filter.clone())
-        } else {
-            factory(config.access())
+        if cfg.access().name() != cfg.common().name() {
+            mem::replace(&mut ctx, LoggerContext::new(cfg.access().name().to_owned()));
+        }
+
+        let access = Entry {
+            logger: ctx.create(cfg.access().source().to_owned()),
+            filter: ctx.filter().clone(),
         };
+
+        for &(ref log, ref cfg) in [(&common, cfg.common()), (&access, cfg.access())].iter() {
+            log.filter.set(cfg.severity().into());
+        }
 
         Self {
             common: common,
-            common_filter: common_filter,
             access: access,
-            access_filter: access_filter,
         }
     }
 }

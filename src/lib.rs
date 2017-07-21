@@ -120,7 +120,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let logging = Loggers::from(config.logging());
     let metrics = Arc::new(Metrics::default());
 
-    cocaine_log!(logging.common(), Severity::Debug, "starting Cocaine HTTP Proxy with {:?}", config);
+    cocaine_log!(logging.common().logger(), Severity::Debug, "starting Cocaine HTTP Proxy with {:?}", config);
 
     // Here we create several event channels that will deliver control events to services pools.
     // We could create a separate thread pool for processing Cocaine invocation events with their
@@ -135,7 +135,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // Start all periodic jobs in a separate thread that will produce control events for pools.
     let thread: JoinHandle<Result<(), io::Error>> = {
         let cfg = config.clone();
-        let log = logging.common().clone();
+        let log = logging.common().logger().clone();
         let dispatch = dispatch.clone();
         thread::Builder::new().name(THREAD_NAME_PERIODIC.into()).spawn(move || {
             let mut core = Core::new()?;
@@ -214,13 +214,13 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     };
 
     let mut router = Router::new();
-    router.add(Arc::new(AppRoute::new(dispatch.clone(), logging.access().clone())
+    router.add(Arc::new(AppRoute::new(dispatch.clone(), logging.access().logger().clone())
         .with_tracing_header(config.tracing().header().to_owned())));
-    router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().clone())));
+    router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().logger().clone())));
 
     if config.is_load_testing_enabled() {
-        router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().clone())));
-        cocaine_log!(logging.common(), Severity::Debug, "enabled performance measuring route");
+        router.add(Arc::new(PerfRoute::new(dispatch.clone(), logging.access().logger().clone())));
+        cocaine_log!(logging.common().logger(), Severity::Debug, "enabled performance measuring route");
     }
 
     let factory = ProxyServiceFactoryFactory::new(
@@ -229,7 +229,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         config.clone(),
         router,
         metrics.clone(),
-        logging.common().clone(),
+        logging.common().logger().clone(),
     );
 
     let proxy_cfg = ServerConfig::new(config.network().addr())
@@ -244,8 +244,8 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
         metrics
     );
 
-    cocaine_log!(logging.common(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
-    ServerGroup::new(logging.common().clone())?
+    cocaine_log!(logging.common().logger(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
+    ServerGroup::new(logging.common().logger().clone())?
         .expose(proxy_cfg, factory)?
         .expose(monitoring_cfg, monitoring)?
         .run()?;
