@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::error;
 use std::fmt::{self, Display, Formatter};
 use std::str;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -312,6 +313,7 @@ struct AppWithSafeRetry {
     dispatcher: EventDispatch,
     headers: Vec<hpack::Header>,
     current: Option<BoxFuture<Option<(Response, u64)>, Error>>,
+    verbose: Arc<AtomicBool>,
 }
 
 impl AppWithSafeRetry {
@@ -333,6 +335,7 @@ impl AppWithSafeRetry {
             dispatcher: dispatcher,
             headers: headers,
             current: None,
+            verbose: Arc::new(AtomicBool::new(false)),
         };
 
         res.current = Some(res.make_future());
@@ -344,11 +347,13 @@ impl AppWithSafeRetry {
         let (tx, rx) = oneshot::channel();
 
         let request = self.request.clone();
+        let verbose = self.verbose.clone();
         let mut headers = self.headers.clone();
         let ev = Event::Service {
             name: request.service.clone(),
             func: box move |service: &Service, settings: Settings| {
-                if settings.verbose {
+                if settings.verbose || verbose.load(Ordering::Acquire) {
+                    verbose.store(true, Ordering::Release);
                     headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 
