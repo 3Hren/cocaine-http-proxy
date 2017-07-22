@@ -417,10 +417,10 @@ impl Future for AppWithSafeRetry {
                 } else {
                     let body = "Retry limit exceeded: queue is full";
                     let bytes = body.len() as u64;
-                    let res = Response::new()
+                    let resp = Response::new()
                         .with_status(StatusCode::InternalServerError)
                         .with_body(body);
-                    return Ok(Async::Ready((res, bytes)));
+                    return Ok(Async::Ready((resp, bytes)));
                 }
             }
             Ok(Async::NotReady) => {}
@@ -597,11 +597,11 @@ impl Dispatch for AppReadDispatch {
                 let body = err.to_string();
                 let body_len = body.len() as u64;
 
-                let res = Response::new()
+                let resp = Response::new()
                     .with_status(StatusCode::InternalServerError)
                     .with_header(XRequestId(self.trace))
                     .with_body(body);
-                drop(self.tx.send(Some((res, body_len))));
+                drop(self.tx.send(Some((resp, body_len))));
                 None
             }
         }
@@ -621,11 +621,11 @@ impl Dispatch for AppReadDispatch {
             StatusCode::InternalServerError
         };
 
-        let res = Response::new()
+        let resp = Response::new()
             .with_status(status)
             .with_header(XRequestId(self.trace))
             .with_body(body);
-        drop(self.tx.send(Some((res, body_len))));
+        drop(self.tx.send(Some((resp, body_len))));
     }
 }
 
