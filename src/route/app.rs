@@ -318,16 +318,7 @@ struct AppWithSafeRetry {
 
 impl AppWithSafeRetry {
     fn new(request: AppRequest, dispatcher: EventDispatch, limit: u32) -> Self {
-        let mut headers = Vec::with_capacity(4);
-
-        let mut buf = vec![0; 8];
-        LittleEndian::write_u64(&mut buf[..], request.trace);
-        headers.push(hpack::Header::new(&b"trace_id"[..], buf.clone()));
-        let span = rand::random::<u64>();
-        let mut span_buf = vec![0; 8];
-        LittleEndian::write_u64(&mut span_buf[..], span);
-        headers.push(hpack::Header::new(&b"span_id"[..], span_buf));
-        headers.push(hpack::Header::new(&b"parent_id"[..], buf));
+        let headers = Self::make_headers(request.trace);
 
         let mut res = Self {
             attempts: 1,
@@ -342,6 +333,21 @@ impl AppWithSafeRetry {
         res.current = Some(res.make_future());
 
         res
+    }
+
+    fn make_headers(trace: u64) -> Vec<hpack::Header> {
+        let mut headers = Vec::with_capacity(4);
+
+        let mut buf = vec![0; 8];
+        LittleEndian::write_u64(&mut buf[..], trace);
+        headers.push(hpack::Header::new(&b"trace_id"[..], buf.clone()));
+        let span = rand::random::<u64>();
+        let mut span_buf = vec![0; 8];
+        LittleEndian::write_u64(&mut span_buf[..], span);
+        headers.push(hpack::Header::new(&b"span_id"[..], span_buf));
+        headers.push(hpack::Header::new(&b"parent_id"[..], buf));
+
+        headers
     }
 
     fn make_future(&self) -> BoxFuture<Option<(Response, u64)>, Error> {
