@@ -348,12 +348,16 @@ impl AppWithSafeRetry {
 
         let request = self.request.clone();
         let verbose = self.verbose.clone();
+        let attempt = self.attempts;
         let mut headers = self.headers.clone();
         let ev = Event::Service {
             name: request.service.clone(),
             func: box move |service: &Service, settings: Settings| {
-                if settings.verbose || verbose.load(Ordering::Acquire) {
+                if settings.verbose && attempt == 1 {
                     verbose.store(true, Ordering::Release);
+                }
+
+                if verbose.load(Ordering::Acquire) {
                     headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 
