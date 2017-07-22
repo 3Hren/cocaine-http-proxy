@@ -384,6 +384,7 @@ impl AppWithSafeRetry {
                     tx.send(2, &[0; 0]);
                     Ok(())
                 }).then(|_| {
+                    // TODO: Consider if it is okay to always finish the future with OK. May be log?
                     Ok(())
                 });
 
