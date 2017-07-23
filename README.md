@@ -35,7 +35,7 @@ There are load testing results to a geobase service:
 ![Load Testing][load-img]
     
 ##### Cloud Logging.
-...
+The proxy have common and access attribute-based logs and write them directly into the Logging Service completely asynchronously, which allows to route all cluster logs into a single place for further analyze.
 
 ##### Metrics
 The proxy collects various metrics during execution and is able to provide them through monitoring server.
@@ -104,4 +104,5 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 [cocaine-tornado-proxy]: https://github.com/cocaine/cocaine-tools/tree/master/cocaine/proxy
 [ci-img]: https://travis-ci.org/3Hren/cocaine-http-proxy.svg?branch=master
 [ci-url]: https://travis-ci.org/3Hren/cocaine-http-proxy
-[load-img]: https://s3-us-west-2.amazonaws.com/cocaine-http-proxy/load.png 
+[load-img]: https://s3-us-west-2.amazonaws.com/cocaine-http-proxy/load.png
+[load2-img]: https://s3-us-west-2.amazonaws.com/cocaine-http-proxy/load2.png
