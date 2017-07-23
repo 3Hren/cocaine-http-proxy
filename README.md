@@ -30,7 +30,9 @@ The resulted debian package lies in `./target/debian` directory.
 ##### High performance and low memory footprint.
 Backed with [Cocaine Framework Rust][cocaine-framework-rust] and [MessagePack][rmp] this HTTP proxy allows to communicate asynchronously with the Cloud applications and services.
 
-There are load testing results to a geobase service. The proxy runs on a machine with Intel(R) Xeon(R) CPU E5-2660 0 @ 2.20GHz:
+The following load testing results are collected using Yandex Tank, firing proxy that redirects all requests to a Geobase Service. 
+
+The proxy runs on a machine with Intel(R) Xeon(R) CPU E5-2660 0 @ 2.20GHz:
  
 ![Load Testing][load-img]
     
