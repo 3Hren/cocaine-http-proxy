@@ -54,6 +54,14 @@ esafronov@local:~$ curl localhost:10000/metrics | python -mjson.tool
         "m01rate": 227871.29106938263,
         "m05rate": 141047.39695553246,
         "m15rate": 90542.77725215351
+    },
+    "responses": {
+        "c5xx": {
+            "count": 188712,
+            "m01rate": 1.4037895865759178,
+            "m05rate": 1.4119725792925535,
+            "m15rate": 1.3532291261984246
+        }
     }
 }
 ```
