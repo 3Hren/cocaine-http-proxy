@@ -5,8 +5,6 @@ An entry point to the Cocaine Cloud.
 
 Cocaine HTTP proxy terminates HTTP traffic and transforms it into the binary protocol, allowing to communicate with Cloud services and applications.
 
-ВСТАВИТЬ КАРТИНКУ ГРАФ HTTP-PROXY-COCAINE-APP
-
 It's a high-performance solution, developed to transparently replace the [cocaine-tornado-proxy][cocaine-tornado-proxy] that is written in Python. 
 
 ### Installation
@@ -31,6 +29,10 @@ The resulted debian package lies in `./target/debian` directory.
 
 ##### High performance and low memory footprint.
 Backed with [Cocaine Framework Rust][cocaine-framework-rust] and [MessagePack][rmp] this HTTP proxy allows to communicate asynchronously with the Cloud applications and services.
+
+There are load testing results to a geobase service:
+ 
+![Load Testing][load-img]
     
 ##### Cloud Logging.
 ...
@@ -102,3 +104,4 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 [cocaine-tornado-proxy]: https://github.com/cocaine/cocaine-tools/tree/master/cocaine/proxy
 [ci-img]: https://travis-ci.org/3Hren/cocaine-http-proxy.svg?branch=master
 [ci-url]: https://travis-ci.org/3Hren/cocaine-http-proxy
+[load-img]: https://s3-us-west-2.amazonaws.com/cocaine-http-proxy/load.png 
