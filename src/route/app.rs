@@ -311,7 +311,7 @@ struct AppWithSafeRetry {
     limit: u32,
     request: Arc<AppRequest>,
     dispatcher: EventDispatch,
-    headers: Vec<hpack::Header>,
+    headers: Vec<hpack::RawHeader>,
     current: Option<BoxFuture<Option<(Response, u64)>, Error>>,
     verbose: Arc<AtomicBool>,
 }
@@ -335,17 +335,17 @@ impl AppWithSafeRetry {
         res
     }
 
-    fn make_headers(trace: u64) -> Vec<hpack::Header> {
+    fn make_headers(trace: u64) -> Vec<hpack::RawHeader> {
         let mut headers = Vec::with_capacity(4);
 
         let mut buf = vec![0; 8];
         LittleEndian::write_u64(&mut buf[..], trace);
-        headers.push(hpack::Header::new(&b"trace_id"[..], buf.clone()));
+        headers.push(hpack::RawHeader::new(&b"trace_id"[..], buf.clone()));
         let span = rand::random::<u64>();
         let mut span_buf = vec![0; 8];
         LittleEndian::write_u64(&mut span_buf[..], span);
-        headers.push(hpack::Header::new(&b"span_id"[..], span_buf));
-        headers.push(hpack::Header::new(&b"parent_id"[..], buf));
+        headers.push(hpack::RawHeader::new(&b"span_id"[..], span_buf));
+        headers.push(hpack::RawHeader::new(&b"parent_id"[..], buf));
 
         headers
     }
@@ -365,11 +365,11 @@ impl AppWithSafeRetry {
                 }
 
                 if verbose.load(Ordering::Acquire) {
-                    headers.push(hpack::Header::new(&b"trace_bit"[..], &b"1"[..]));
+                    headers.push(hpack::RawHeader::new(&b"trace_bit"[..], &b"1"[..]));
                 }
 
                 if let Some(timeout) = settings.timeout {
-                    headers.push(hpack::Header::new(&b"request_timeout"[..], format!("{}", timeout).into_bytes()));
+                    headers.push(hpack::RawHeader::new(&b"request_timeout"[..], format!("{}", timeout).into_bytes()));
                 }
 
                 let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {

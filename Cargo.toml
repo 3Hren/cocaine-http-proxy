@@ -39,7 +39,7 @@ regex = "0.2"
 #slog-stdlog = "1.1"
 #slog-envlogger = "0.5"
 
-cocaine = "0.5.3"
+cocaine = "0.6"
 rmp-serde = "0.13.3"
 rmpv = { version = "0.4", features = ["with-serde"] }
 

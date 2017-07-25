@@ -13,7 +13,7 @@ use tokio_core::reactor::Handle;
 use uuid::Uuid;
 
 use cocaine::{Error, Service};
-use cocaine::hpack::Header;
+use cocaine::hpack::RawHeader;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
 use cocaine::service::locator::HashRing;
@@ -506,7 +506,7 @@ where
         let path = self.path.clone();
 
         let future = self.tm.create().and_then(move |ticket| {
-            let auth = Header::new(
+            let auth = RawHeader::new(
                 // TODO: Use hardcoded names.
                 "authorization".as_bytes(),
                 format!("TVM {}", ticket).into_bytes()
