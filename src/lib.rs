@@ -1,6 +1,5 @@
 #![feature(box_syntax, fnbox, integer_atomics, never_type)]
 
-extern crate byteorder;
 #[macro_use]
 extern crate cocaine;
 extern crate futures;

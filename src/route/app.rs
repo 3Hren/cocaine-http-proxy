@@ -5,8 +5,6 @@ use std::str;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use byteorder::{ByteOrder, LittleEndian};
-
 use rand;
 
 use futures::{self, Async, BoxFuture, Future, Poll, Stream, future};
@@ -24,7 +22,7 @@ use rmpv::ValueRef;
 use serde::Serializer;
 
 use cocaine::{self, Dispatch, Service};
-use cocaine::hpack;
+use cocaine::hpack::{self, Header as CocaineHeader};
 use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
@@ -338,14 +336,10 @@ impl AppWithSafeRetry {
     fn make_headers(trace: u64) -> Vec<hpack::RawHeader> {
         let mut headers = Vec::with_capacity(4);
 
-        let mut buf = vec![0; 8];
-        LittleEndian::write_u64(&mut buf[..], trace);
-        headers.push(hpack::RawHeader::new(&b"trace_id"[..], buf.clone()));
         let span = rand::random::<u64>();
-        let mut span_buf = vec![0; 8];
-        LittleEndian::write_u64(&mut span_buf[..], span);
-        headers.push(hpack::RawHeader::new(&b"span_id"[..], span_buf));
-        headers.push(hpack::RawHeader::new(&b"parent_id"[..], buf));
+        headers.push(hpack::TraceId(trace).into_raw());
+        headers.push(hpack::SpanId(span).into_raw());
+        headers.push(hpack::ParentId(trace).into_raw());
 
         headers
     }
@@ -365,7 +359,7 @@ impl AppWithSafeRetry {
                 }
 
                 if verbose.load(Ordering::Acquire) {
-                    headers.push(hpack::RawHeader::new(&b"trace_bit"[..], &b"1"[..]));
+                    headers.push(hpack::TraceBit(true).into_raw());
                 }
 
                 if let Some(timeout) = settings.timeout {
