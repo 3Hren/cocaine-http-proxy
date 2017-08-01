@@ -1,0 +1,13 @@
+Source: cocaine-http-proxy
+Section: utils
+Priority: optional
+Maintainer: Evgeny Safronov <division494@gmail.com>
+Build-Depends: debhelper (>= 7)
+Standards-Version: 3.9.3
+Homepage: https://github.com/cocaine/cocaine-http-proxy
+
+Package: cocaine-http-proxy
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Entry point for the Cocaine APE Cloud
+ Terminates HTTP traffic, allowing to call Cocaine applications and services.

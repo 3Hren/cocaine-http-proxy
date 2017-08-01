@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+# Uncomment this to turn on verbose mode.
+# export DH_VERBOSE=1
+export DEB_BUILD_OPTIONS=nostrip
+
+DEB_DESTDIR=$(CURDIR)/debian/tmp/
+
+include /usr/share/cdbs/1/rules/debhelper.mk
+
+install/cocaine-http-proxy::
+	install -d $(DEB_DESTDIR)usr/
+	install -d $(DEB_DESTDIR)usr/bin/
+	install -m755 target/release/cocaine-http-proxy $(DEB_DESTDIR)usr/bin/cocaine-http-proxy
+	install -d $(DEB_DESTDIR)etc/cocaine-http-proxy/
+	install -m644 config.yaml $(DEB_DESTDIR)etc/cocaine-http-proxy/cocaine-http-proxy-default.yaml

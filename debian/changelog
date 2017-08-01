@@ -1,0 +1,5 @@
+cocaine-http-proxy (0.3.9) trusty; urgency=low
+
+  * Added: first public release.
+
+ -- Evgeny Safronov <division494@gmail.com>  Mon, 31 Jul 2017 13:30:52 +0300
