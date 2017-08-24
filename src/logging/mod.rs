@@ -105,8 +105,8 @@ impl<L: Log> AccessLogger<L> {
         cocaine_log!(log, Severity::Debug, "processing HTTP request"; {
             service: service,
             event: event,
-            trace_id: trace,
-            request_id: format!("{:016x}", trace),
+            trace: trace,
+            trace_id: format!("{:016x}", trace),
             request: format!("{:?}", SafeRequestDebug(req)),
         });
 
@@ -128,8 +128,8 @@ impl<L: Log> AccessLogger<L> {
         let elapsed_ms = (elapsed.as_secs() * 1000000000 + elapsed.subsec_nanos() as u64) as f64 / 1e6;
 
         cocaine_log!(self.log, Severity::Info, "request finished in {:.3} ms", elapsed_ms; {
-            request_id: format!("{:016x}", self.trace),
-            trace_id: self.trace,
+            trace: self.trace,
+            trace_id: format!("{:016x}", self.trace),
             duration: elapsed_ms / 1000.0,
             method: self.method.to_string(),
             uri: self.uri.to_string(),
