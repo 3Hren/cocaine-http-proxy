@@ -1,3 +1,16 @@
+cocaine-http-proxy (0.3.12) trusty; urgency=low
+
+  * Added: tracing policy header.
+    This commit allows to manually specify whether a request should be
+    traced verbosely using `X-Cocaine-Tracing-Policy` header.
+    It allows `Auto` value to fall back to default dice rolling policy as
+    like as specifying real value in [0; 1] range to calculate trace bit
+    chance.
+    For example `X-Cocaine-Tracing-Policy: 1.0` forces the request to be
+    fully traced.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 24 Aug 2017 17:56:03 +0300
+
 cocaine-http-proxy (0.3.11) trusty; urgency=low
 
   * Changed: format trace id as a hex.
