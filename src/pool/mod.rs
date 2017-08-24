@@ -261,7 +261,7 @@ impl PoolTask {
         let log = self.log.clone();
         let cfg = self.cfg.config(&name);
 
-        let mut pool = {
+        let pool = {
             let name = name.clone();
             self.pool.entry(name.clone())
                 .or_insert_with(|| ServicePool::new(name, cfg, handle, tx, log))
