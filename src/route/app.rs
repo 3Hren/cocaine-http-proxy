@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::error;
 use std::fmt::{self, Display, Formatter};
 use std::str;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -70,6 +71,57 @@ impl Header for XRequestId {
 
     fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
         fmt.fmt_line(&format!("{:x}", self.0))
+    }
+}
+
+/// Describes how a request should be traced.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TracingPolicy {
+    /// Use automatically configured settings from the proxy.
+    Auto,
+    /// Use tracing chance value provided by the user. Must be in [0.0; 1.0] range.
+    Manual(f64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct XTracingPolicy(TracingPolicy);
+
+impl Into<TracingPolicy> for XTracingPolicy {
+    fn into(self) -> TracingPolicy {
+        self.0
+    }
+}
+
+impl Header for XTracingPolicy {
+    fn header_name() -> &'static str {
+        "X-Cocaine-Tracing-Policy"
+    }
+
+    fn parse_header(raw: &Raw) -> Result<XTracingPolicy, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if line == b"Auto" {
+                Ok(XTracingPolicy(TracingPolicy::Auto))
+            } else {
+                if let Ok(line) = str::from_utf8(line) {
+                    if let Ok(val) = f64::from_str(line) {
+                        if 0.0 <= val && val <= 1.0 {
+                            return Ok(XTracingPolicy(TracingPolicy::Manual(val)))
+                        }
+                    }
+                }
+
+                Err(hyper::Error::Header)
+            }
+        } else {
+            Err(hyper::Error::Header)
+        }
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            XTracingPolicy(TracingPolicy::Auto) => fmt.fmt_line(&"Auto"),
+            XTracingPolicy(TracingPolicy::Manual(v)) => fmt.fmt_line(&format!("{:.3}", v)),
+        }
     }
 }
 
@@ -152,6 +204,11 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             rand::random::<u64>()
         };
 
+        let tracing_policy = req.headers()
+            .get::<XTracingPolicy>()
+            .map(|&v| v.into())
+            .unwrap_or(TracingPolicy::Auto);
+
         let log = AccessLogger::new(self.log.clone(), &req, service.clone(), event.clone(), trace);
         let mut app_request = AppRequest::new(service, event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
@@ -160,7 +217,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             .map_err(Error::InvalidBodyRead)
             .and_then(move |body| {
                 app_request.set_body(body.to_vec());
-                AppWithSafeRetry::new(app_request, dispatcher, 3)
+                AppWithSafeRetry::new(app_request, dispatcher, 3, tracing_policy)
             })
             .then(move |result| {
                 match result {
@@ -312,10 +369,11 @@ struct AppWithSafeRetry {
     headers: Vec<hpack::RawHeader>,
     current: Option<BoxFuture<Option<(Response, u64)>, Error>>,
     verbose: Arc<AtomicBool>,
+    tracing_policy: TracingPolicy,
 }
 
 impl AppWithSafeRetry {
-    fn new(request: AppRequest, dispatcher: EventDispatch, limit: u32) -> Self {
+    fn new(request: AppRequest, dispatcher: EventDispatch, limit: u32, tracing_policy: TracingPolicy) -> Self {
         let headers = Self::make_headers(request.trace);
 
         let mut res = Self {
@@ -326,6 +384,7 @@ impl AppWithSafeRetry {
             headers: headers,
             current: None,
             verbose: Arc::new(AtomicBool::new(false)),
+            tracing_policy: tracing_policy,
         };
 
         res.current = Some(res.make_future());
@@ -351,9 +410,19 @@ impl AppWithSafeRetry {
         let verbose = self.verbose.clone();
         let attempt = self.attempts;
         let mut headers = self.headers.clone();
+
+        let manual_verbose = match self.tracing_policy {
+            TracingPolicy::Auto => None,
+            TracingPolicy::Manual(v) => Some(rand::random::<f64>() <= v),
+        };
+
         let ev = Event::Service {
             name: request.service.clone(),
-            func: box move |service: &Service, settings: Settings| {
+            func: box move |service: &Service, mut settings: Settings| {
+                if let Some(true) = manual_verbose {
+                    settings.verbose = true;
+                }
+
                 if settings.verbose && attempt == 1 {
                     verbose.store(true, Ordering::Release);
                 }
@@ -649,6 +718,28 @@ fn test_request_id_header_err() {
     assert!(XRequestId::parse_header(&Raw::from("")).is_err());
     assert!(XRequestId::parse_header(&Raw::from("0x42")).is_err());
     assert!(XRequestId::parse_header(&Raw::from("damn")).is_err());
+}
+
+#[test]
+fn test_tracing_policy_header() {
+    let header = XTracingPolicy::parse_header(&Raw::from("Auto")).unwrap();
+    let value: TracingPolicy = header.into();
+    assert_eq!(TracingPolicy::Auto, value);
+}
+
+#[test]
+fn test_tracing_policy_header_manual() {
+    let header = XTracingPolicy::parse_header(&Raw::from("1.0")).unwrap();
+    let value: TracingPolicy = header.into();
+    assert_eq!(TracingPolicy::Manual(1.0), value);
+}
+
+#[test]
+fn test_tracing_policy_header_manual_err() {
+    assert!(XTracingPolicy::parse_header(&Raw::from("zero")).is_err());
+    assert!(XTracingPolicy::parse_header(&Raw::from("-0.1")).is_err());
+    assert!(XTracingPolicy::parse_header(&Raw::from("-1")).is_err());
+    assert!(XTracingPolicy::parse_header(&Raw::from("1.01")).is_err());
 }
 
 #[cfg(test)]
