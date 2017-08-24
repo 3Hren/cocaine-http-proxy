@@ -1,3 +1,14 @@
+cocaine-http-proxy (0.3.11) trusty; urgency=low
+
+  * Changed: format trace id as a hex.
+    Change `trace_id` attribute formatting, making it hex to be able to
+    properly match our Cocaine traces in a single format.
+    The old unformatted trace attribute is now formatted using `trace`.
+    Moreover this commit removes `request_id` attribute, as it is no longer
+    needed.
+
+ -- Evgeny Safronov <division494@gmail.com>  Thu, 24 Aug 2017 16:37:43 +0300
+
 cocaine-http-proxy (0.3.10) trusty; urgency=low
 
   * Changed: update CLAP dependency.
