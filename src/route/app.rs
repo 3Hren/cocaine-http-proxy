@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::error;
 use std::fmt::{self, Display, Formatter};
 use std::str;
@@ -12,7 +13,7 @@ use futures::{self, Async, BoxFuture, Future, Poll, Stream, future};
 use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
-use hyper::header::{self, Header, Raw};
+use hyper::header::{self, Header, Headers, Raw};
 use hyper::server::{Request, Response};
 
 use regex::Regex;
@@ -136,6 +137,7 @@ trait Call {
 
 pub struct AppRoute<L> {
     dispatcher: EventDispatch,
+    headers: HashMap<String, String>,
     tracing_header: Cow<'static, str>,
     regex: Regex,
     log: L,
@@ -145,6 +147,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
     pub fn new(dispatcher: EventDispatch, log: L) -> Self {
         Self {
             dispatcher: dispatcher,
+            headers: HashMap::new(),
             tracing_header: XRequestId::header_name().into(),
             regex: Regex::new("/([^/]*)/([^/?]*)(.*)").expect("invalid URI regex in app route"),
             log: log,
@@ -155,6 +158,11 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         where H: Into<Cow<'static, str>>
     {
         self.tracing_header = header.into();
+        self
+    }
+
+    pub fn with_headers_mapping(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = headers;
         self
     }
 
@@ -188,6 +196,20 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         }
     }
 
+    fn map_headers(&self, headers: &Headers) -> Vec<hpack::RawHeader> {
+        self.headers.iter()
+            .filter_map(|(name, mapped)| headers.get_raw(name).map(|v| (mapped, v)))
+            .map(|(name, value)| {
+                let value = value.into_iter().fold(Vec::new(), |mut vec, v| {
+                    vec.extend(v);
+                    vec
+                });
+
+                hpack::RawHeader::new(name.clone().into_bytes(), value)
+            })
+            .collect()
+    }
+
     fn invoke(&self, service: String, event: String, req: Request, uri: String)
         -> Box<Future<Item = Response, Error = Error>>
     {
@@ -210,6 +232,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             .unwrap_or(TracingPolicy::Auto);
 
         let log = AccessLogger::new(self.log.clone(), &req, service.clone(), event.clone(), trace);
+        let headers = self.map_headers(req.headers());
         let mut app_request = AppRequest::new(service, event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
         req.body()
@@ -217,7 +240,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
             .map_err(Error::InvalidBodyRead)
             .and_then(move |body| {
                 app_request.set_body(body.to_vec());
-                AppWithSafeRetry::new(app_request, dispatcher, 3, tracing_policy)
+                AppWithSafeRetry::new(app_request, headers, dispatcher, 3, tracing_policy)
             })
             .then(move |result| {
                 match result {
@@ -373,8 +396,8 @@ struct AppWithSafeRetry {
 }
 
 impl AppWithSafeRetry {
-    fn new(request: AppRequest, dispatcher: EventDispatch, limit: u32, tracing_policy: TracingPolicy) -> Self {
-        let headers = Self::make_headers(request.trace);
+    fn new(request: AppRequest, headers: Vec<hpack::RawHeader>, dispatcher: EventDispatch, limit: u32, tracing_policy: TracingPolicy) -> Self {
+        let headers = Self::make_headers(headers, request.trace);
 
         let mut res = Self {
             attempts: 1,
@@ -392,8 +415,8 @@ impl AppWithSafeRetry {
         res
     }
 
-    fn make_headers(trace: u64) -> Vec<hpack::RawHeader> {
-        let mut headers = Vec::with_capacity(4);
+    fn make_headers(headers: Vec<hpack::RawHeader>, trace: u64) -> Vec<hpack::RawHeader> {
+        let mut headers = headers;
 
         let span = rand::random::<u64>();
         headers.push(hpack::TraceId(trace).into_raw());

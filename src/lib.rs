@@ -212,7 +212,9 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
 
     let mut router = Router::new();
     router.add(Arc::new(AppRoute::new(dispatch.clone(), logging.access().logger().clone())
-        .with_tracing_header(config.tracing().header().to_owned())));
+        .with_tracing_header(config.tracing().header().to_owned())
+        .with_headers_mapping(config.headers().clone())
+    ));
     router.add(Arc::new(JsonRpc::new(dispatch.clone(), logging.access().logger().clone())));
 
     if config.is_load_testing_enabled() {
