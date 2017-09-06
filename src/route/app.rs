@@ -416,7 +416,11 @@ impl AppWithSafeRetry {
     }
 
     fn make_headers(headers: Vec<hpack::RawHeader>, trace: u64) -> Vec<hpack::RawHeader> {
-        let mut headers = headers;
+        let mut headers = if headers.is_empty() {
+            Vec::with_capacity(4)
+        } else {
+            headers
+        };
 
         let span = rand::random::<u64>();
         headers.push(hpack::TraceId(trace).into_raw());
