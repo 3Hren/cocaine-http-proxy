@@ -1,3 +1,12 @@
+cocaine-http-proxy (0.3.13) trusty; urgency=low
+
+  * Added: HTTP headers forwarding mechanism.
+    This change allows to forward HTTP headers into the Cocaine invocation
+    headers with optional name mapping.
+  * Changed: improved compilation time by removing unused dependencies.
+
+ -- Evgeny Safronov <division494@gmail.com>  Wed, 06 Sep 2017 19:46:42 +0300
+
 cocaine-http-proxy (0.3.12) trusty; urgency=low
 
   * Added: tracing policy header.
