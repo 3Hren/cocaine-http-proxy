@@ -240,6 +240,7 @@ pub struct Config {
     monitoring: MonitoringConfig,
     pool: PoolConfig,
     tracing: TracingConfig,
+    headers: HashMap<String, String>,
     timeout: u64,
     timeouts: TimeoutsConfig,
     auth: AuthConfig,
@@ -303,6 +304,11 @@ impl Config {
 
     pub fn tracing(&self) -> &TracingConfig {
         &self.tracing
+    }
+
+    /// Returns HTTP headers forward mapping.
+    pub fn headers(&self) -> &HashMap<String, String> {
+        &self.headers
     }
 
     /// Returns proxy timeout.
