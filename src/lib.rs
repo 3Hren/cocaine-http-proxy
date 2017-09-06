@@ -8,7 +8,6 @@ extern crate hyper;
 extern crate itertools;
 extern crate jsonrpc_core;
 extern crate libc;
-extern crate log;
 extern crate net2;
 extern crate num_cpus;
 extern crate rand;
@@ -22,7 +21,6 @@ extern crate serde_json;
 extern crate serde_yaml;
 extern crate time;
 extern crate tokio_core;
-extern crate tokio_proto;
 extern crate tokio_service;
 extern crate uuid;
 
