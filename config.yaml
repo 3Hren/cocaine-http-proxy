@@ -62,6 +62,13 @@ tracing:
   # even debug logs.
   probability: 0.01
 
+# HTTP headers forwarding.
+# Specified headers will be transformed and passed into the invocation event.
+# Their values remain unchanged.
+# Note, that HTTP headers are case-insensitive, thus we can detect both cases.
+headers:
+  authorization: authorization
+
 # Response timeout in seconds after which it will be canceled and the server
 # responds with 504 HTTP status code.
 timeout: 30
