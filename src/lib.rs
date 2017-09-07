@@ -52,6 +52,7 @@ use self::server::{ServerConfig, ServerGroup};
 use self::service::cocaine::ProxyServiceFactoryFactory;
 use self::service::monitor::MonitorServiceFactoryFactory;
 
+mod common;
 mod config;
 mod logging;
 mod metrics;
