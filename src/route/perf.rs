@@ -48,7 +48,7 @@ impl Route for PerfRoute {
                         drop(tx);
                         Ok(())
                     });
-                future.boxed()
+                box future as Box<Future<Item = (), Error = ()> + Send>
             },
         };
 
@@ -61,7 +61,7 @@ impl Route for PerfRoute {
             Ok(res)
         }).map_err(|err| hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err))));
 
-        Match::Some(future.boxed())
+        Match::Some(box future)
     }
 }
 

@@ -198,7 +198,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                     Some(..) | None => {
                                         let err = Error::invalid_params("'args' parameter is required and must be an array");
                                         let out = Output::from(Err(err), id, Some(Version::V2));
-                                        return future::ok(Some(out)).boxed()
+                                        return box future::ok(Some(out))
                                     }
                                 }
                             }
@@ -215,7 +215,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                     Some(methods) => methods,
                                     None => {
                                         let service = service.clone();
-                                        return service.connect().then(move |result| {
+                                        return box service.connect().then(move |result| {
                                             match result {
                                                 Ok(()) => {
                                                     match service.methods() {
@@ -238,8 +238,8 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                                                 }
                                             }
 
-                                            future::ok(()).boxed()
-                                        }).boxed()
+                                            box future::ok(())
+                                        }) as Box<Future<Item = (), Error = ()> + Send>;
                                     }
                                 };
 
@@ -249,15 +249,14 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 
                         d.send(ev);
 
-                        future
+                        box future
                             .and_then(move |resp| Ok(Some(resp)))
                             .map_err(|err| {
                                 hyper::Error::Io(io::Error::new(ErrorKind::Other, format!("{}", err)))
                             })
-                            .boxed()
                     }
                     Err(err) => {
-                        future::ok(Some(Output::from(Err(err), id, Some(Version::V2)))).boxed()
+                        box future::ok(Some(Output::from(Err(err), id, Some(Version::V2))))
                     }
                 }
             }
@@ -265,7 +264,7 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                 unimplemented!();
             }
             Call::Invalid(id) => {
-                future::ok(Some(Output::invalid_request(id, Some(Version::V2)))).boxed()
+                box future::ok(Some(Output::invalid_request(id, Some(Version::V2))))
             }
         }
     }
@@ -331,17 +330,17 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                     }
 
                     Ok(())
-                }).boxed()
+                })
             } else {
                 service.call(ty, &vec![0u8; 0], headers, dispatch).then(|tx| {
                     mem::drop(tx);
                     Ok(())
-                }).boxed()
+                })
             }
         } else {
             let out = Output::from(Err(Error::method_not_found()), id, Some(Version::V2));
             mem::drop(tx.send(out));
-            future::ok(()).boxed()
+            box future::ok(())
         }
     }
 
@@ -375,7 +374,6 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
             let d = self.dispatcher.clone();
             let log = self.log.clone();
 
-            // TODO: There is a bug in `futures 0.1` when `concat` panics on empty stream (#451).
             let future = req.body().concat2().and_then(move |data| {
                 let req = match json::from_slice(&data) {
                     Ok(req) => req,
@@ -387,7 +385,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
                             .with_header(ContentType::json())
                             .with_header(ContentLength(body.len() as u64))
                             .with_body(body);
-                        return future::ok(resp).boxed();
+                        return box future::ok(resp) as Box<Future<Item=HttpResponse, Error=hyper::Error>>;
                     }
                 };
 
@@ -398,14 +396,13 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
                     Request::Batch(calls) => calls,
                 };
 
-                stream::iter_ok(calls.into_iter())
+                box stream::iter_ok(calls.into_iter())
                     .and_then(move |call| Self::call(call, d.clone()))
                     .collect()
                     .and_then(|resp| Ok(Self::make_response(resp)))
-                    .boxed()
             });
 
-            Match::Some(future.boxed())
+            Match::Some(box future)
         } else {
             Match::None(req)
         }

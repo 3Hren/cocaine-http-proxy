@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use rand;
 
-use futures::{self, Async, BoxFuture, Future, Poll, Stream, future};
+use futures::{self, Async, Future, Poll, Stream, future};
 use futures::sync::oneshot;
 
 use hyper::{self, HttpVersion, Method, StatusCode};
@@ -124,7 +124,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                 Ok(v) => v.into(),
                 Err(..) => {
                     let err = Error::InvalidRequestIdHeader(self.tracing_header.clone());
-                    return future::err(err).boxed()
+                    return box future::err(err)
                 }
             }
         } else {
@@ -141,7 +141,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
         let headers = self.map_headers(req.headers());
         let mut app_request = AppRequest::new(service, event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
-        req.body()
+        let future = req.body()
             .concat2()
             .map_err(Error::InvalidBodyRead)
             .and_then(move |body| {
@@ -160,8 +160,9 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                         Err(err)
                     }
                 }
-            })
-            .boxed()
+            });
+
+        box future
     }
 }
 
@@ -185,7 +186,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
                 let resp = Response::new()
                     .with_status(err.code())
                     .with_body(err.to_string());
-                Match::Some(future::ok(resp).boxed())
+                Match::Some(box future::ok(resp))
             }
             None => Match::None(req),
         }
@@ -296,7 +297,7 @@ struct AppWithSafeRetry {
     request: Arc<AppRequest>,
     dispatcher: EventDispatch,
     headers: Vec<hpack::RawHeader>,
-    current: Option<BoxFuture<Option<(Response, u64)>, Error>>,
+    current: Option<Box<Future<Item=Option<(Response, u64)>, Error=Error> + Send>>,
     verbose: Arc<AtomicBool>,
     tracing_policy: TracingPolicy,
 }
@@ -336,7 +337,7 @@ impl AppWithSafeRetry {
         headers
     }
 
-    fn make_future(&self) -> BoxFuture<Option<(Response, u64)>, Error> {
+    fn make_future(&self) -> Box<Future<Item=Option<(Response, u64)>, Error=Error> + Send> {
         let (tx, rx) = oneshot::channel();
 
         let request = self.request.clone();
@@ -384,7 +385,7 @@ impl AppWithSafeRetry {
                     Ok(())
                 });
 
-                future.boxed()
+                box future as Box<Future<Item = (), Error = ()> + Send>
             }
         };
 
@@ -392,7 +393,7 @@ impl AppWithSafeRetry {
 
         let future = rx.map_err(|futures::Canceled| Error::Canceled);
 
-        future.boxed()
+        box future
     }
 }
 

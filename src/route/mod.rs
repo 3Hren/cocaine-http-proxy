@@ -93,7 +93,7 @@ impl Router {
             }
         }
 
-        future::ok(Response::new().with_status(StatusCode::NotFound)).boxed()
+        box future::ok(Response::new().with_status(StatusCode::NotFound))
     }
 }
 

@@ -365,7 +365,7 @@ impl Action for RoutingGroupsAction {
             dispatcher: self.dispatcher.clone(),
             log: self.log.clone(),
             uuid: uuid,
-            stream: stream.boxed(),
+            stream: box stream,
         }
     }
 }
@@ -461,7 +461,7 @@ impl Factory for TicketFactory {
     type Future = Box<Future<Item = Self::Item, Error = Error> + Send>;
 
     fn create(&mut self) -> Self::Future {
-        self.tvm.ticket(self.client_id, &self.client_secret, &self.grant).boxed()
+        box self.tvm.ticket(self.client_id, &self.client_secret, &self.grant)
     }
 }
 
@@ -517,7 +517,7 @@ where
 
         SubscribeTask {
             path: self.path.clone(),
-            state: Some(SubscribeState::Start(future.boxed())),
+            state: Some(SubscribeState::Start(box future)),
             close: None,
             callback: self.callback.clone(),
             log: self.log.clone(),
