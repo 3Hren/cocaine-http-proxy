@@ -626,56 +626,6 @@ impl Dispatch for AppReadDispatch {
     }
 }
 
-#[test]
-fn test_request_id_header() {
-    let header = XRequestId::parse_header(&Raw::from("2a")).unwrap();
-    let value: u64 = header.into();
-    assert_eq!(42, value);
-}
-
-#[test]
-fn test_request_id_header_offset() {
-    let header = XRequestId::parse_header(&Raw::from("0000002a")).unwrap();
-    let value: u64 = header.into();
-    assert_eq!(42, value);
-}
-
-#[test]
-fn test_request_id_header_real() {
-    let header = XRequestId::parse_header(&Raw::from("fc1d162f7797fba1")).unwrap();
-    let value: u64 = header.into();
-    assert_eq!(18166700865008171937, value);
-}
-
-#[test]
-fn test_request_id_header_err() {
-    assert!(XRequestId::parse_header(&Raw::from("")).is_err());
-    assert!(XRequestId::parse_header(&Raw::from("0x42")).is_err());
-    assert!(XRequestId::parse_header(&Raw::from("damn")).is_err());
-}
-
-#[test]
-fn test_tracing_policy_header() {
-    let header = XTracingPolicy::parse_header(&Raw::from("Auto")).unwrap();
-    let value: TracingPolicy = header.into();
-    assert_eq!(TracingPolicy::Auto, value);
-}
-
-#[test]
-fn test_tracing_policy_header_manual() {
-    let header = XTracingPolicy::parse_header(&Raw::from("1.0")).unwrap();
-    let value: TracingPolicy = header.into();
-    assert_eq!(TracingPolicy::Manual(1.0), value);
-}
-
-#[test]
-fn test_tracing_policy_header_manual_err() {
-    assert!(XTracingPolicy::parse_header(&Raw::from("zero")).is_err());
-    assert!(XTracingPolicy::parse_header(&Raw::from("-0.1")).is_err());
-    assert!(XTracingPolicy::parse_header(&Raw::from("-1")).is_err());
-    assert!(XTracingPolicy::parse_header(&Raw::from("1.01")).is_err());
-}
-
 #[cfg(test)]
 mod test {
     use hyper::HttpVersion;

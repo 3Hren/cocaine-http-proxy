@@ -417,8 +417,7 @@ mod test {
     use futures::{Future, Stream};
     use futures::sync::mpsc;
 
-    use hyper;
-    use hyper::{Body, Method, StatusCode, Uri};
+    use hyper::{self, Body, Method, StatusCode, Uri};
     use hyper::server::{Response, Request};
 
     use cocaine::logging::{Severity, FilterResult, Log};
