@@ -350,7 +350,7 @@ impl ServerGroup {
                         let fd = unsafe { libc::dup(sock.as_raw_fd()) };
                         if fd >= 0 {
                             let cloned = unsafe { net::TcpStream::from_raw_fd(fd) };
-                            if let Err(..) = iter.next().expect("iterator is infinite").send((cloned, addr)) {
+                            if let Err(..) = iter.next().expect("iterator is infinite").unbounded_send((cloned, addr)) {
                                 cocaine_log!(log, Severity::Error, "failed to schedule incoming TCP connection from {}", addr);
                             }
                         } else {

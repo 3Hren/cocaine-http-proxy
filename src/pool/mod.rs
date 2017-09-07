@@ -53,14 +53,14 @@ impl EventDispatch {
     pub fn send(&self, event: Event) {
         let rand = rand::random::<usize>();
         let roll = rand % self.senders.len();
-        mem::drop(self.senders[roll].send(event));
+        mem::drop(self.senders[roll].unbounded_send(event));
     }
 
     pub fn send_all<F>(&self, f: F)
         where F: Fn() -> Event
     {
         for sender in &self.senders {
-            mem::drop(sender.send(f()));
+            mem::drop(sender.unbounded_send(f()));
         }
     }
 
@@ -151,7 +151,7 @@ impl ServicePool {
                 }
             }
 
-            tx.send(Event::OnServiceConnect(service)).unwrap();
+            tx.unbounded_send(Event::OnServiceConnect(service)).unwrap();
             Ok(())
         }));
     }

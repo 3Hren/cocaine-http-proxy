@@ -398,7 +398,7 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for JsonRpc<L> {
                     Request::Batch(calls) => calls,
                 };
 
-                stream::iter(calls.into_iter().map(Ok))
+                stream::iter_ok(calls.into_iter())
                     .and_then(move |call| Self::call(call, d.clone()))
                     .collect()
                     .and_then(|resp| Ok(Self::make_response(resp)))
