@@ -1,3 +1,10 @@
+cocaine-http-proxy (0.3.14) unreleased; urgency=low
+
+  * Changed: improved the speed of invocation events by eliminating a pair of
+    unnecessary heap allocations.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 08 Sep 2017 00:10:33 +0300
+
 cocaine-http-proxy (0.3.13) trusty; urgency=low
 
   * Added: HTTP headers forwarding mechanism.

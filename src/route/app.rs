@@ -369,7 +369,10 @@ impl AppWithSafeRetry {
                     headers.push(hpack::RawHeader::new(&b"request_timeout"[..], format!("{}", timeout).into_bytes()));
                 }
 
-                let future = service.call(0, &vec![request.event.clone()], headers, AppReadDispatch {
+                let req = cocaine::Request::new(0, &[request.event.clone()]).unwrap()
+                    .add_headers(headers);
+
+                let future = service.call(req, AppReadDispatch {
                     tx: tx,
                     method: request.frame.method.clone(),
                     body: None,
@@ -377,8 +380,8 @@ impl AppWithSafeRetry {
                     response: Some(Response::new()),
                 }).and_then(move |tx| {
                     let buf = rmps::to_vec(&request.frame).unwrap();
-                    tx.send(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]);
-                    tx.send(2, &[0; 0]);
+                    tx.send(cocaine::Request::new(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]).unwrap());
+                    tx.send(cocaine::Request::new(2, &[0; 0]).unwrap());
                     Ok(())
                 }).then(|_| {
                     // TODO: Consider if it is okay to always finish the future with OK. May be log?

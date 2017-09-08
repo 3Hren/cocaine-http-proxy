@@ -512,7 +512,7 @@ where
                 format!("TVM {}", ticket).into_bytes()
             );
 
-            Box::new(unicorn.subscribe(path, Some(vec![auth])))
+            Box::new(unicorn.subscribe(&path, Some(vec![auth])))
         });
 
         SubscribeTask {

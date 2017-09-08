@@ -291,7 +291,9 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 
             if let Some(args) = params {
                 let graph = graph.tx.clone();
-                service.call(ty, &args, headers, dispatch).then(move |tx| {
+                let req = cocaine::Request::new(ty, &args).unwrap()
+                    .add_headers(headers);
+                box service.call(req, dispatch).then(move |tx| {
 //                    println!("After call");
                     let mut graph = &graph;
 
@@ -305,17 +307,18 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
 //                                        println!("Event={}, args={:?}", event, args);
                                         if let Some((ty, g)) = graph.iter().find(|&(.., ref g)| g.event == event) {
 //                                            println!("Type={}, Graph={:?}", ty, g);
+                                            let req = cocaine::Request::new(*ty, &args).unwrap();
                                             match g.rx {
                                                 Some(ref g) if g.is_empty() => {
-                                                    tx.send(*ty, &args);
+                                                    tx.send(req);
                                                     break;
                                                 }
                                                 Some(ref g) => {
                                                     graph = g;
-                                                    tx.send(*ty, &args);
+                                                    tx.send(req);
                                                 }
                                                 None => {
-                                                    tx.send(*ty, &args);
+                                                    tx.send(req);
                                                 }
                                             }
                                         } else {
@@ -332,7 +335,9 @@ impl<L: Log + Clone + Send + Sync + 'static> JsonRpc<L> {
                     Ok(())
                 })
             } else {
-                service.call(ty, &vec![0u8; 0], headers, dispatch).then(|tx| {
+                let req = cocaine::Request::new(ty, &[0u8; 0]).unwrap()
+                    .add_headers(headers);
+                box service.call(req, dispatch).then(|tx| {
                     mem::drop(tx);
                     Ok(())
                 })

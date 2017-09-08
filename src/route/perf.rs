@@ -13,7 +13,7 @@ use hyper::server::{Response, Request};
 
 use rmpv::ValueRef;
 
-use cocaine::{Dispatch, Error, Service};
+use cocaine::{self, Dispatch, Error, Service};
 use cocaine::logging::Logger;
 
 use logging::AccessLogger;
@@ -43,7 +43,7 @@ impl Route for PerfRoute {
         let ev = Event::Service {
             name: "geobase".into(),
             func: box move |service: &Service, _settings: Settings| {
-                let future = service.call(0, &vec!["8.8.8.8"], Vec::new(), SingleChunkReadDispatch { tx: tx })
+                let future = service.call(cocaine::Request::new(0, &["8.8.8.8"]).unwrap(), SingleChunkReadDispatch { tx: tx })
                     .then(|tx| {
                         drop(tx);
                         Ok(())
