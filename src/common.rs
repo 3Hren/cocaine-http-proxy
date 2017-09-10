@@ -4,9 +4,90 @@ use std::str::{self, FromStr};
 use hyper;
 use hyper::header::{self, Header, Raw};
 
-header! { (XCocaineService, "X-Cocaine-Service") => [String] }
-header! { (XCocaineEvent, "X-Cocaine-Event") => [String] }
-header! { (XPoweredBy, "X-Powered-By") => [String] }
+#[derive(Clone, Debug, PartialEq)]
+pub struct XCocaineService(pub String);
+
+impl Header for XCocaineService {
+    fn header_name() -> &'static str {
+        "X-Cocaine-Service"
+    }
+
+    fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if let Ok(line) = str::from_utf8(line) {
+                return Ok(XCocaineService(line.into()))
+            }
+        }
+
+        Err(hyper::Error::Header)
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        fmt.fmt_line(&self.0)
+    }
+}
+
+impl XCocaineService {
+    pub fn to_string(&self) -> String {
+        match *self {
+            XCocaineService(ref v) => v.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct XCocaineEvent(pub String);
+
+impl Header for XCocaineEvent {
+    fn header_name() -> &'static str {
+        "X-Cocaine-Event"
+    }
+
+    fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if let Ok(line) = str::from_utf8(line) {
+                return Ok(XCocaineEvent(line.into()))
+            }
+        }
+
+        Err(hyper::Error::Header)
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        fmt.fmt_line(&self.0)
+    }
+}
+
+impl XCocaineEvent {
+    pub fn to_string(&self) -> String {
+        match *self {
+            XCocaineEvent(ref v) => v.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct XPoweredBy(pub String);
+
+impl Header for XPoweredBy {
+    fn header_name() -> &'static str {
+        "X-Powered-By"
+    }
+
+    fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if let Ok(line) = str::from_utf8(line) {
+                return Ok(XPoweredBy(line.into()))
+            }
+        }
+
+        Err(hyper::Error::Header)
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        fmt.fmt_line(&self.0)
+    }
+}
 
 impl Default for XPoweredBy {
     fn default() -> Self {
