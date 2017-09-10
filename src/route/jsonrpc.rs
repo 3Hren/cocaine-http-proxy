@@ -44,8 +44,7 @@ use rmpv::ValueRef;
 use serde_json as json;
 use serde_json::Value;
 
-use cocaine::{self, Dispatch, Service};
-use cocaine::service::locator::{EventGraph, GraphNode};
+use cocaine::{self, Dispatch, EventGraph, GraphNode, Service};
 use cocaine::logging::{Severity, Log};
 
 use pool::{Event, EventDispatch, Settings};
