@@ -11,8 +11,6 @@ use hyper::{self, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Response, Request};
 
-use rmpv::ValueRef;
-
 use cocaine::{self, Dispatch, Error, Service};
 use cocaine::logging::Logger;
 
@@ -70,16 +68,16 @@ pub struct SingleChunkReadDispatch {
 }
 
 impl Dispatch for SingleChunkReadDispatch {
-    fn process(self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        let (code, body) = match ty {
+    fn process(self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
+        let (code, body) = match response.ty() {
             0 => {
-                (StatusCode::Ok, format!("{}", data))
+                (StatusCode::Ok, format!("{:?}", response))
             }
             1 => {
-                (StatusCode::InternalServerError, format!("{}", data))
+                (StatusCode::InternalServerError, format!("{:?}", response))
             }
             m => {
-                (StatusCode::InternalServerError, format!("unknown type: {} {}", m, data))
+                (StatusCode::InternalServerError, format!("unknown type: {} {:?}", m, response))
             }
         };
 

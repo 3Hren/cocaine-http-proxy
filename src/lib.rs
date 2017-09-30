@@ -13,7 +13,6 @@ extern crate num_cpus;
 extern crate rand;
 extern crate regex;
 extern crate rmp_serde as rmps;
-extern crate rmpv;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;

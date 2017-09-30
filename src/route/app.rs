@@ -18,7 +18,6 @@ use hyper::server::{Request, Response};
 use regex::Regex;
 
 use rmps;
-use rmpv::ValueRef;
 
 use serde::Serializer;
 
@@ -493,8 +492,8 @@ struct AppReadDispatch {
 }
 
 impl Dispatch for AppReadDispatch {
-    fn process(mut self: Box<Self>, ty: u64, data: &ValueRef) -> Option<Box<Dispatch>> {
-        match protocol::deserialize::<protocol::Streaming<rmps::RawRef>>(ty, data).flatten() {
+    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
+        match response.deserialize::<protocol::Streaming<rmps::RawRef>>().flatten() {
             // TODO: Support chunked transfer encoding.
             Ok(Some(data)) => {
                 if self.body.is_none() {

@@ -39,8 +39,6 @@ use hyper::{self, StatusCode};
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Response as HttpResponse, Request as HttpRequest};
 
-use rmpv::ValueRef;
-
 use serde_json as json;
 use serde_json::Value;
 
@@ -121,14 +119,15 @@ struct JsonDispatch {
 }
 
 impl Dispatch for JsonDispatch {
-    fn process(mut self: Box<Self>, ty: u64, response: &ValueRef) -> Option<Box<Dispatch>> {
+    fn process(mut self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
+        let ty = response.ty();
         match self.graph.remove(&ty) {
             Some(graph) => {
                 let GraphNode { event, rx } = graph;
 
                 let chunk = Chunk {
                     event: event.clone(),
-                    value: json::to_value(response.to_owned()).unwrap(),
+                    value: response.deserialize::<Value>().unwrap(),
                 };
 
                 self.chunks.push(chunk);

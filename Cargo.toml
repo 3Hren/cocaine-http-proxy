@@ -39,7 +39,6 @@ regex = "0.2"
 #cocaine = "0.6.1"
 cocaine = { version = "*", path = "../cocaine-framework-rust" }
 rmp-serde = "0.13.3"
-rmpv = { version = "0.4", features = ["with-serde"] }
 
 [profile.dev]
 panic = "abort"
