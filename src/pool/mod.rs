@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::iter;
 use std::mem;
 use std::time::{Duration, SystemTime};
+use std::vec::IntoIter;
 
 use futures::{Async, Future, Poll, Stream};
 use futures::future::Loop;
@@ -47,7 +48,7 @@ pub struct EventDispatch {
 
 impl EventDispatch {
     pub fn new(senders: Vec<UnboundedSender<Event>>) -> Self {
-        Self { senders: senders }
+        Self { senders }
     }
 
     pub fn send(&self, event: Event) {
@@ -63,10 +64,15 @@ impl EventDispatch {
             mem::drop(sender.unbounded_send(f()));
         }
     }
+}
+
+impl IntoIterator for EventDispatch {
+    type Item = UnboundedSender<Event>;
+    type IntoIter = IntoIter<Self::Item>;
 
     /// Destructs this dispatcher, yielding underlying senders.
-    pub fn into_senders(self) -> Vec<UnboundedSender<Event>> {
-        self.senders
+    fn into_iter(self) -> Self::IntoIter {
+        self.senders.into_iter()
     }
 }
 
