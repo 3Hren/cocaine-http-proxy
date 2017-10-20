@@ -125,7 +125,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     // We could create a separate thread pool for processing Cocaine invocation events with their
     // own event loops, but it appeared that having common thread pool with both HTTP events and
     // Cocaine one gives more RPS with lower latency.
-    let (txs, rxs) = itertools::repeat_call(|| mpsc::unbounded())
+    let (txs, rxs): (Vec<_>, Vec<_>) = itertools::repeat_call(|| mpsc::unbounded())
         .take(config.threads())
         .unzip();
 
@@ -225,8 +225,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     }
 
     let factory = ProxyServiceFactoryFactory::new(
-        dispatch.into_senders(),
-        rxs,
+        dispatch.into_iter().zip(rxs),
         config.clone(),
         router,
         metrics.clone(),

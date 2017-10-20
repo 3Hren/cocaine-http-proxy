@@ -2,10 +2,9 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::vec::IntoIter;
 
 use futures::{future, Future};
-use futures::sync::mpsc;
+use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_core::reactor::{Handle, Timeout};
 use tokio_service::Service;
 
@@ -154,26 +153,26 @@ impl ServiceFactory for ProxyServiceFactory {
     }
 }
 
-pub struct ProxyServiceFactoryFactory {
-    tx: Mutex<IntoIter<mpsc::UnboundedSender<Event>>>,
-    rx: Mutex<IntoIter<mpsc::UnboundedReceiver<Event>>>,
+pub struct ProxyServiceFactoryFactory<I> {
+    channels: Mutex<I>,
     cfg: Config,
     router: Router,
     metrics: Arc<Metrics>,
     log: Logger,
 }
 
-impl ProxyServiceFactoryFactory {
-    pub fn new(txs: Vec<mpsc::UnboundedSender<Event>>,
-               rxs: Vec<mpsc::UnboundedReceiver<Event>>,
+impl<I> ProxyServiceFactoryFactory<I>
+where
+    I: Iterator<Item = (UnboundedSender<Event>, UnboundedReceiver<Event>)> + Send
+{
+    pub fn new(channels: I,
                cfg: Config,
                router: Router,
                metrics: Arc<Metrics>,
                log: Logger) -> Self
     {
         Self {
-            tx: Mutex::new(txs.clone().into_iter()),
-            rx: Mutex::new(rxs.into_iter()),
+            channels: Mutex::new(channels),
             cfg: cfg,
             router: router,
             metrics: metrics,
@@ -182,13 +181,14 @@ impl ProxyServiceFactoryFactory {
     }
 }
 
-impl ServiceFactorySpawn for ProxyServiceFactoryFactory {
+impl<I> ServiceFactorySpawn for ProxyServiceFactoryFactory<I>
+where
+    I: Iterator<Item = (UnboundedSender<Event>, UnboundedReceiver<Event>)> + Send
+{
     type Factory = ProxyServiceFactory;
 
     fn create_factory(&self, handle: &Handle) -> Self::Factory {
-        let tx = self.tx.lock().unwrap().next()
-            .expect("number of event channels must be exactly the same as the number of threads");
-        let rx = self.rx.lock().unwrap().next()
+        let (tx, rx) = self.channels.lock().unwrap().next()
             .expect("number of event channels must be exactly the same as the number of threads");
 
         // This will stop after all associated connections are closed.
