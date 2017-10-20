@@ -74,13 +74,15 @@ struct ConnectionMetrics {
 }
 
 fn serialize_counter<S>(counter: &Counter, se: S) -> Result<S::Ok, S::Error>
-    where S: Serializer
+where
+    S: Serializer
 {
     se.serialize_i64(counter.get())
 }
 
 fn serialize_meter<S>(meter: &RateMeter, se: S) -> Result<S::Ok, S::Error>
-    where S: Serializer
+where
+    S: Serializer
 {
     let mut map = se.serialize_map(Some(4))?;
     map.serialize_key("count")?;
@@ -240,7 +242,7 @@ pub fn run(config: Config) -> Result<(), Box<error::Error>> {
     let monitoring = MonitorServiceFactoryFactory::new(
         Arc::new(config.clone()),
         Arc::new(logging.clone()),
-        metrics
+        metrics,
     );
 
     cocaine_log!(logging.common().logger(), Severity::Info, "started HTTP proxy at {}", config.network().addr());
