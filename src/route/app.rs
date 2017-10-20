@@ -418,6 +418,7 @@ impl Future for AppWithSafeRetry {
                     let bytes = body.len() as u64;
                     let resp = Response::new()
                         .with_status(StatusCode::InternalServerError)
+                        .with_header(XRequestId(self.request.trace))
                         .with_body(body);
                     return Ok(Async::Ready((resp, bytes)));
                 }
