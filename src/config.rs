@@ -280,7 +280,8 @@ impl Config {
         self.threads.unwrap_or(num_cpus::get())
     }
 
-    pub fn locators(&self) -> &Vec<(IpAddr, u16)> {
+    /// Returns the Locator endpoints.
+    pub fn locators(&self) -> &[(IpAddr, u16)] {
         &self.locators
     }
 
