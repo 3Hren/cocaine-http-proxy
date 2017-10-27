@@ -13,6 +13,7 @@ use hyper::server::{Response, Request};
 
 use cocaine::{self, Dispatch, Error, Service};
 use cocaine::logging::Logger;
+use cocaine::protocol::{Primitive, Flatten};
 
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
@@ -69,16 +70,9 @@ pub struct SingleChunkReadDispatch {
 
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
-        let (code, body) = match response.ty() {
-            0 => {
-                (StatusCode::Ok, format!("{:?}", response))
-            }
-            1 => {
-                (StatusCode::InternalServerError, format!("{:?}", response))
-            }
-            m => {
-                (StatusCode::InternalServerError, format!("unknown type: {} {:?}", m, response))
-            }
+        let (code, body) = match response.deserialize::<Primitive<i64>>().flatten() {
+            Ok(v) => (StatusCode::Ok, format!("{}", v)),
+            Err(err) => (StatusCode::InternalServerError, format!("{:?}", err)),
         };
 
         let body_len = body.as_bytes().len() as u64;
