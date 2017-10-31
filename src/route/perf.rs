@@ -71,7 +71,7 @@ pub struct SingleChunkReadDispatch {
 impl Dispatch for SingleChunkReadDispatch {
     fn process(self: Box<Self>, response: &cocaine::Response) -> Option<Box<Dispatch>> {
         let (code, body) = match response.deserialize::<Primitive<i64>>().flatten() {
-            Ok(v) => (StatusCode::Ok, format!("{}", v)),
+            Ok(v) => (StatusCode::Ok, format!("[{}]", v)),
             Err(err) => (StatusCode::InternalServerError, format!("{:?}", err)),
         };
 
