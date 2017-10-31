@@ -42,8 +42,11 @@ logging:
   # Access logging section.
   # Here will be written request-associated events, like "request finished".
   access:
+    # Service name into which all access logs will be written.
     name: logging-access
+    # Source field for logging service.
     source: proxy/access
+    # Severity filter.
     severity: warn
 
 # Name of the unified configuration service that is used for fine-grained

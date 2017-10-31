@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt::{self, Debug, Formatter};
-use std::mem;
 use std::time::Instant;
 
 use hyper::{Method, StatusCode, Uri};
@@ -8,7 +7,7 @@ use hyper::server::Request;
 
 use cocaine::logging::{Filter, Log, Logger, LoggerContext, Severity};
 
-use config::LoggingConfig;
+use config::{LoggingBaseConfig, LoggingConfig};
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -17,10 +16,25 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Constructs a new logging entry with its own context using the specified configuration.
+    fn new(cfg: &LoggingBaseConfig) -> Self {
+        let ctx = LoggerContext::new(cfg.name().to_owned());
+        let log = Self {
+            logger: ctx.create(cfg.source().to_owned()),
+            filter: ctx.filter().clone(),
+        };
+
+        log.filter.set(cfg.severity().into());
+
+        log
+    }
+
+    /// Returns a logger reference this entry owns.
     pub fn logger(&self) -> &Logger {
         &self.logger
     }
 
+    /// Returns a logger filter this entry owns.
     pub fn filter(&self) -> &Filter {
         &self.filter
     }
@@ -48,28 +62,9 @@ impl Loggers {
 
 impl<'a> From<&'a LoggingConfig> for Loggers {
     fn from(cfg: &'a LoggingConfig) -> Self {
-        let mut ctx = LoggerContext::new(cfg.common().name().to_owned());
-        let common = Entry {
-            logger: ctx.create(cfg.common().source().to_owned()),
-            filter: ctx.filter().clone(),
-        };
-
-        if cfg.access().name() != cfg.common().name() {
-            mem::replace(&mut ctx, LoggerContext::new(cfg.access().name().to_owned()));
-        }
-
-        let access = Entry {
-            logger: ctx.create(cfg.access().source().to_owned()),
-            filter: ctx.filter().clone(),
-        };
-
-        for &(ref log, ref cfg) in [(&common, cfg.common()), (&access, cfg.access())].iter() {
-            log.filter.set(cfg.severity().into());
-        }
-
         Self {
-            common: common,
-            access: access,
+            common: Entry::new(cfg.common()),
+            access: Entry::new(cfg.access()),
         }
     }
 }
