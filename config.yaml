@@ -27,17 +27,20 @@ locators:
 
 # Logging settings. All logs are written directly into the logging service.
 # Omit this section to disable logging into the Cocaine.
+# Each logger is managed in a separate thread (even if their names are equal),
+# to be able to write all events asynchronously without blocking.
 logging:
-  # The following fields can be configured:
-  # - name: service name into which all logging will be redirected.
-  # - source: source field for logging service.
-  # - severity: severity filter.
-  #   Logging events with severity less than specified will be dropped. Allowed
-  #   values are: [debug, info, warn, error].
+  # Common logging section.
   common:
+    # Service name into which all logging will be redirected.
     name: logging
+    # Source field for logging service.
     source: proxy/common
+    # Severity filter. Logging events with severity less than specified will
+    # be dropped. Allowed values are: [debug, info, warn, error].
     severity: debug
+  # Access logging section.
+  # Here will be written request-associated events, like "request finished".
   access:
     name: logging-access
     source: proxy/access
