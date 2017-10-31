@@ -27,6 +27,26 @@ pub struct ProxyService {
     log: Logger,
 }
 
+impl ProxyService {
+    fn new(addr: Option<SocketAddr>, router: Router, metrics: Arc<Metrics>, log: Logger) -> Self {
+        metrics.connections.active.add(1);
+        metrics.connections.accepted.add(1);
+
+        if let Some(addr) = addr {
+            cocaine_log!(log, Severity::Info, "accepted connection from {}", addr);
+        } else {
+            cocaine_log!(log, Severity::Info, "accepted connection from Unix socket");
+        }
+
+        Self {
+            addr: addr,
+            router: router,
+            metrics: metrics,
+            log: log,
+        }
+    }
+}
+
 impl Service for ProxyService {
     type Request  = Request;
     type Response = Response;
@@ -131,22 +151,7 @@ impl ServiceFactory for ProxyServiceFactory {
     type Error    = hyper::Error;
 
     fn create_service(&mut self, addr: Option<SocketAddr>) -> Result<Self::Instance, io::Error> {
-        self.metrics.connections.active.add(1);
-        self.metrics.connections.accepted.add(1);
-
-        if let Some(addr) = addr {
-            cocaine_log!(self.log, Severity::Info, "accepted connection from {}", addr);
-        } else {
-            cocaine_log!(self.log, Severity::Info, "accepted connection from Unix socket");
-        }
-
-        let service = ProxyService {
-            addr: addr,
-            router: self.router.clone(),
-            metrics: self.metrics.clone(),
-            log: self.log.clone(),
-        };
-
+        let service = ProxyService::new(addr, self.router.clone(), self.metrics.clone(), self.log.clone());
         let wrapped = TimeoutMiddleware::new(service, self.timeout, self.handle.clone());
 
         Ok(wrapped)
