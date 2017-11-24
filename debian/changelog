@@ -2,6 +2,15 @@ cocaine-http-proxy (0.3.14) unreleased; urgency=low
 
   * Changed: improved the speed of invocation events by eliminating a pair of
     unnecessary heap allocations.
+  * Changed: update cocaine version that fixes an UB which forbids us to use
+    latest nightly compilers.
+  * Changed: reuse locator connection. This change forces the proxy to reuse
+    a single locator (per thread) for resolving all services. This saves a
+    tons of fds (basically almost by twice).
+  * Fixed: fix a bug where in the case of equal logger names their filters
+    affect each other.
+  * Deps: update to futures 0.1.15.
+  * Deps: drop `rpmv` dependency.
 
  -- Evgeny Safronov <division494@gmail.com>  Fri, 08 Sep 2017 00:10:33 +0300
 
