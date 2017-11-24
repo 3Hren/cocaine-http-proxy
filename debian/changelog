@@ -1,4 +1,4 @@
-cocaine-http-proxy (0.3.14) unreleased; urgency=low
+cocaine-http-proxy (0.3.14) trusty; urgency=low
 
   * Changed: improved the speed of invocation events by eliminating a pair of
     unnecessary heap allocations.

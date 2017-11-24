@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "cocaine-http-proxy"
-version = "0.3.13"
+version = "0.3.14"
 dependencies = [
  "clap 2.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cocaine 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
