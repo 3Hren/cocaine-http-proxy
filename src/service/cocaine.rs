@@ -11,9 +11,11 @@ use tokio_service::Service;
 use hyper::{self, StatusCode};
 use hyper::server::{Request, Response};
 
+use cocaine::{Resolver, ServiceBuilder};
+use cocaine::service::Locator;
 use cocaine::logging::{Severity, Logger};
 
-use Metrics;
+use {Metrics, DEFAULT_LOCATOR_NAME};
 use config::Config;
 use metrics::{Meter, Count};
 use pool::{Event, PoolTask};
@@ -196,8 +198,17 @@ where
         let (tx, rx) = self.channels.lock().unwrap().next()
             .expect("number of event channels must be exactly the same as the number of threads");
 
+        let locator_addrs = self.cfg.locators().iter()
+            .map(|&(addr, port)| SocketAddr::new(addr, port))
+            .collect::<Vec<SocketAddr>>();
+        let locator = ServiceBuilder::new(DEFAULT_LOCATOR_NAME)
+            .locator_addrs(locator_addrs)
+            .build(handle);
+        let locator = Locator::new(locator);
+        let resolver = Resolver::new(locator);
+
         // This will stop after all associated connections are closed.
-        let pool = PoolTask::new(handle.clone(), self.log.clone(), tx, rx, self.cfg.clone());
+        let pool = PoolTask::new(handle.clone(), resolver, self.log.clone(), tx, rx, self.cfg.clone());
 
         handle.spawn(pool);
         ProxyServiceFactory {

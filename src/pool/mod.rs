@@ -13,7 +13,7 @@ use rand;
 use tokio_core::reactor::Handle;
 use uuid::Uuid;
 
-use cocaine::{Error, Service};
+use cocaine::{Error, Resolver, Service, ServiceBuilder};
 use cocaine::hpack::RawHeader;
 use cocaine::logging::{Logger, Severity};
 use cocaine::service::Locator;
@@ -92,6 +92,7 @@ impl WatchedService {
 
 struct ServicePool {
     log: Logger,
+    resolver: Resolver,
 
     /// Next service.
     counter: usize,
@@ -109,11 +110,12 @@ struct ServicePool {
 }
 
 impl ServicePool {
-    fn new(name: String, cfg: ServicePoolConfig, handle: &Handle, tx: UnboundedSender<Event>, log: Logger) -> Self {
+    fn new(name: String, cfg: ServicePoolConfig, resolver: Resolver, handle: &Handle, tx: UnboundedSender<Event>, log: Logger) -> Self {
         let now = SystemTime::now();
 
         Self {
             log: log,
+            resolver: resolver.clone(),
             counter: 0,
             name: name.clone(),
             limit: cfg.limit(),
@@ -124,7 +126,12 @@ impl ServicePool {
             connecting_limit: cmp::max(1, (cfg.limit() as f64 * cfg.reconnection_ratio()).ceil() as usize),
             services: iter::repeat(name)
                 .take(cfg.limit())
-                .map(|name| WatchedService::new(Service::new(name.clone(), handle), now))
+                .map(|name| {
+                    let service = ServiceBuilder::new(name.clone())
+                        .resolver(resolver.clone())
+                        .build(handle);
+                    WatchedService::new(service, now)
+                })
                 .collect(),
             tx: tx,
         }
@@ -142,7 +149,9 @@ impl ServicePool {
         cocaine_log!(self.log, Severity::Info, "reconnecting `{}` service", self.name);
         self.connecting += 1;
 
-        let service = Service::new(self.name.clone(), &self.handle);
+        let service = ServiceBuilder::new(self.name.clone())
+            .resolver(self.resolver.clone())
+            .build(&self.handle);
         let future = service.connect();
 
         let tx = self.tx.clone();
@@ -235,6 +244,7 @@ impl Tracing {
 /// - RG notifiers.
 pub struct PoolTask {
     handle: Handle,
+    resolver: Resolver,
     log: Logger,
 
     tx: UnboundedSender<Event>,
@@ -248,9 +258,10 @@ pub struct PoolTask {
 }
 
 impl PoolTask {
-    pub fn new(handle: Handle, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: Config) -> Self {
+    pub fn new(handle: Handle, resolver: Resolver, log: Logger, tx: UnboundedSender<Event>, rx: UnboundedReceiver<Event>, cfg: Config) -> Self {
         Self {
             handle: handle,
+            resolver: resolver,
             log: log,
             tx: tx,
             rx: rx,
@@ -266,11 +277,12 @@ impl PoolTask {
         let tx = self.tx.clone();
         let log = self.log.clone();
         let cfg = self.cfg.config(&name);
+        let resolver = self.resolver.clone();
 
         let pool = {
             let name = name.clone();
             self.pool.entry(name.clone())
-                .or_insert_with(|| ServicePool::new(name, cfg, handle, tx, log))
+                .or_insert_with(|| ServicePool::new(name, cfg, resolver, handle, tx, log))
         };
 
         let now = SystemTime::now();
