@@ -1,3 +1,10 @@
+cocaine-http-proxy (0.3.15) trusty; urgency=low
+
+  * Added: X-Cocaine-Application header in the response, containing
+    a name of parsed application.
+
+ -- Evgeny Safronov <division494@gmail.com>  Fri, 01 Dec 2017 16:27:25 +0300
+
 cocaine-http-proxy (0.3.14) trusty; urgency=low
 
   * Changed: improved the speed of invocation events by eliminating a pair of
