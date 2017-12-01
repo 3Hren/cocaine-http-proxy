@@ -179,6 +179,30 @@ impl Header for XTracingPolicy {
     }
 }
 
+// TODO: Almost the same header already exists for service, but it's here for compatibility with tornado.
+#[derive(Clone, Debug, PartialEq)]
+pub struct XCocaineApp(pub String);
+
+impl Header for XCocaineApp {
+    fn header_name() -> &'static str {
+        "X-Cocaine-Application"
+    }
+
+    fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if let Ok(line) = str::from_utf8(line) {
+                return Ok(XCocaineApp(line.into()))
+            }
+        }
+
+        Err(hyper::Error::Header)
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        fmt.fmt_line(&self.0)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use hyper::header::Raw;

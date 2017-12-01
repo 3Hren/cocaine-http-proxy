@@ -26,7 +26,8 @@ use cocaine::hpack::{self, Header as CocaineHeader};
 use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
-use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequestId, XTracingPolicy};
+use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequestId, XTracingPolicy,
+    XCocaineApp};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route};
@@ -138,7 +139,7 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
 
         let log = AccessLogger::new(self.log.clone(), &req, service.clone(), event.clone(), trace);
         let headers = self.map_headers(req.headers());
-        let mut app_request = AppRequest::new(service, event, trace, &req, uri);
+        let mut app_request = AppRequest::new(service.clone(), event, trace, &req, uri);
         let dispatcher = self.dispatcher.clone();
         let future = req.body()
             .concat2()
@@ -151,6 +152,8 @@ impl<L: Log + Clone + Send + Sync + 'static> AppRoute<L> {
                 match result {
                     Ok((mut resp, size)) => {
                         resp.headers_mut().set(XPoweredBy::default());
+                        resp.headers_mut().set(XCocaineApp(service));
+
                         log.commit(resp.status(), size, None);
                         Ok(resp)
                     }
