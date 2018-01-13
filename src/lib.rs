@@ -1,5 +1,6 @@
 #![feature(box_syntax, fnbox, integer_atomics, never_type)]
 
+extern crate byteorder;
 #[macro_use]
 extern crate cocaine;
 extern crate futures;
@@ -12,6 +13,7 @@ extern crate net2;
 extern crate num_cpus;
 extern crate rand;
 extern crate regex;
+extern crate rmp;
 extern crate rmp_serde as rmps;
 extern crate serde;
 #[macro_use]

@@ -39,6 +39,10 @@ regex = "0.2"
 cocaine = "0.8.2"
 rmp-serde = "0.13.3"
 
+# Hack for backward-compatibility with Cocaine on older MessagePack.
+byteorder = "1"
+rmp = "0.8"
+
 [profile.dev]
 panic = "abort"
 

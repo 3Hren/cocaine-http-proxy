@@ -13,6 +13,7 @@ pub use self::perf::PerfRoute;
 mod app;
 mod jsonrpc;
 mod perf;
+mod serialize;
 
 /// Request matching.
 ///

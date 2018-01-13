@@ -30,7 +30,7 @@ use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequest
     XCocaineApp};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
-use route::{Match, Route};
+use route::{Match, Route, serialize};
 
 trait Call {
     type Call: Fn(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send;
@@ -197,17 +197,17 @@ impl<L: Log + Clone + Send + Sync + 'static> Route for AppRoute<L> {
 
 /// A meta frame of HTTP request for cocaine application HTTP protocol.
 #[derive(Clone, Serialize)]
-struct RequestMeta {
+pub(crate) struct RequestMeta {
     #[serde(serialize_with = "serialize_method")]
-    method: Method,
-    uri: String,
+    pub(crate) method: Method,
+    pub(crate) uri: String,
     #[serde(serialize_with = "serialize_version")]
-    version: HttpVersion,
-    headers: Vec<(String, String)>,
+    pub(crate) version: HttpVersion,
+    pub(crate) headers: Vec<(String, String)>,
     /// HTTP body. May be empty either when there is no body in the request or if it is transmitted
     /// later.
     #[serde(serialize_with = "serialize_body")]
-    body: Vec<u8>,
+    pub(crate) body: Vec<u8>,
 }
 
 #[inline]
@@ -381,7 +381,7 @@ impl AppWithSafeRetry {
                     trace: request.trace,
                     response: Some(Response::new()),
                 }).and_then(move |tx| {
-                    let buf = rmps::to_vec(&request.frame).unwrap();
+                    let buf = serialize::to_vec(&request.frame).unwrap();
                     tx.send(cocaine::Request::new(0, &[unsafe { ::std::str::from_utf8_unchecked(&buf) }]).unwrap());
                     tx.send(cocaine::Request::new(2, &[0; 0]).unwrap());
                     Ok(())
