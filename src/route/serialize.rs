@@ -164,8 +164,7 @@ where
 
     #[inline]
     fn serialize_tuple_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        unimplemented!()
-//        self.serialize_tuple(len)
+        unreachable!()
     }
 
     #[inline]
