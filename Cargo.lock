@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "cocaine"
-version = "0.8.2"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -101,7 +101,7 @@ version = "0.3.15"
 dependencies = [
  "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.26.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "cocaine 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cocaine 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.11.1 (git+https://github.com/hyperium/hyper?rev=fc5b9cce3176776e4c916cd1b907b1649a538f00)",
  "itertools 0.5.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -712,7 +712,7 @@ dependencies = [
 "checksum bytes 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)" = "8b24f16593f445422331a5eed46b72f7f171f910fead4f2ea8f17e727e9c5c14"
 "checksum cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d4c819a1287eb618df47cc647173c5c4c66ba19d888a6e50d605672aed3140de"
 "checksum clap 2.26.0 (registry+https://github.com/rust-lang/crates.io-index)" = "2267a8fdd4dce6956ba6649e130f62fb279026e5e84b92aa939ac8f85ce3f9f0"
-"checksum cocaine 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)" = "e30a48d993d1dd22be40b061e2421ae81a6499cdb1479e09c93ed20f1394c1f2"
+"checksum cocaine 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ac6c2e9b6f8ef1c1d823b4d02a7eff69ed0705ba0b9ed505813990cc9956b9b3"
 "checksum dtoa 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "80c8b71fd71146990a9742fc06dcbbde19161a267e0ad4e572c35162f4578c90"
 "checksum either 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "18785c1ba806c258137c937e44ada9ee7e69a37e3c72077542cd2f069d78562a"
 "checksum futures 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)" = "a82bdc62350ca9d7974c760e9665102fc9d740992a528c2254aa930e53b783c4"

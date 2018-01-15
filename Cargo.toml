@@ -36,7 +36,7 @@ regex = "0.2"
 #slog-stdlog = "1.1"
 #slog-envlogger = "0.5"
 
-cocaine = "0.8.2"
+cocaine = "0.9.1"
 rmp-serde = "0.13.3"
 
 # Hack for backward-compatibility with Cocaine on older MessagePack.
