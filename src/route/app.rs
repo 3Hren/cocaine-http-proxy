@@ -6,6 +6,8 @@ use std::str;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use byteorder::{ByteOrder, LittleEndian};
+
 use rand;
 
 use futures::{self, Async, Future, Poll, Stream, future};
@@ -31,6 +33,12 @@ use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequest
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route, serialize};
+
+fn pack_u64(v: u64) -> Vec<u8> {
+    let mut buf = vec![0; 8];
+    LittleEndian::write_u64(&mut buf[..], v);
+    buf
+}
 
 trait Call {
     type Call: Fn(&Service, Settings) -> Box<Future<Item = (), Error = ()> + Send> + Send;
@@ -368,7 +376,7 @@ impl AppWithSafeRetry {
                 }
 
                 if let Some(timeout) = settings.timeout {
-                    headers.push(hpack::RawHeader::new(&b"request_timeout"[..], format!("{}", timeout).into_bytes()));
+                    headers.push(hpack::RawHeader::new(&b"request_timeout"[..], pack_u64((timeout * 1000.0) as u64)));
                 }
 
                 let req = cocaine::Request::new(0, &[request.event.clone()]).unwrap()

@@ -535,7 +535,7 @@ where
 
         SubscribeTask {
             path: self.path.clone(),
-            state: Some(SubscribeState::Start(box future)),
+            state: Some(SubscribeState::Start(Box::new(future))),
             close: None,
             callback: self.callback.clone(),
             log: self.log.clone(),
