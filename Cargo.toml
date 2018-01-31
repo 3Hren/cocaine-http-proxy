@@ -1,6 +1,6 @@
 [package]
 name = "cocaine-http-proxy"
-version = "0.3.16"
+version = "0.3.17"
 authors = ["Evgeny Safronov <division494@gmail.com>"]
 license = "MIT"
 description = "HTTP proxy for Cocaine APE Cloud"
