@@ -203,6 +203,27 @@ impl Header for XCocaineApp {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct XErrorGeneratedBy(pub String);
+
+impl Header for XErrorGeneratedBy {
+    fn header_name() -> &'static str { "X-Error-Generated-By"}
+
+    fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
+        if let Some(line) = raw.one() {
+            if let Ok(line) = str::from_utf8(line) {
+                return Ok(XErrorGeneratedBy(line.into()));
+            }
+        }
+
+        Err(hyper::Error::Header)
+    }
+
+    fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
+        fmt.fmt_line(&self.0)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use hyper::header::Raw;
