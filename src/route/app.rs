@@ -29,7 +29,7 @@ use cocaine::logging::Log;
 use cocaine::protocol::{self, Flatten};
 
 use common::{TracingPolicy, XCocaineEvent, XCocaineService, XPoweredBy, XRequestId, XTracingPolicy,
-    XCocaineApp};
+    XCocaineApp, XErrorGeneratedBy};
 use logging::AccessLogger;
 use pool::{Event, EventDispatch, Settings};
 use route::{Match, Route, serialize};
@@ -608,10 +608,17 @@ impl Dispatch for AppReadDispatch {
                 let body = err.to_string();
                 let body_len = body.len() as u64;
 
-                let resp = Response::new()
+                let mut resp = Response::new()
                     .with_status(StatusCode::InternalServerError)
                     .with_header(XRequestId(self.trace))
                     .with_body(body);
+
+                if let cocaine::Error::Service(ref err) = err {
+                    if err.category() == 0x54ff {
+                        resp.headers_mut().set(XErrorGeneratedBy("vicodyn".to_string()));
+                    }
+                }
+
                 drop(self.tx.send(Some((resp, body_len))));
                 None
             }
