@@ -207,7 +207,9 @@ impl Header for XCocaineApp {
 pub struct XErrorGeneratedBy(pub String);
 
 impl Header for XErrorGeneratedBy {
-    fn header_name() -> &'static str { "X-Error-Generated-By"}
+    fn header_name() -> &'static str {
+        "X-Error-Generated-By"
+    }
 
     fn parse_header(raw: &Raw) -> Result<Self, hyper::Error> {
         if let Some(line) = raw.one() {
