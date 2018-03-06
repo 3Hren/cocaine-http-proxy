@@ -2,7 +2,7 @@ Source: cocaine-http-proxy
 Section: utils
 Priority: optional
 Maintainer: Evgeny Safronov <division494@gmail.com>
-Build-Depends: debhelper (>= 7)
+Build-Depends: debhelper (>= 7), cdbs, curl
 Standards-Version: 3.9.3
 Homepage: https://github.com/cocaine/cocaine-http-proxy
 
