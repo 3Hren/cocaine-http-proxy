@@ -8,6 +8,20 @@ DEB_DESTDIR=$(CURDIR)/debian/tmp/
 
 include /usr/share/cdbs/1/rules/debhelper.mk
 
+export CARGO_HOME := $(CURDIR)/build/toolchains/
+export RUSTUP_HOME := $(CURDIR)/build/toolchains/
+export PATH := $(CARGO_HOME)/bin:$(PATH)
+
+clean::
+	rm -rf target/ build/toolchains/
+
+configure/cocaine-http-proxy::
+	curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly
+
+build/cocaine-http-proxy::
+	cargo build --release --verbose
+	cargo test
+
 install/cocaine-http-proxy::
 	install -d $(DEB_DESTDIR)usr/
 	install -d $(DEB_DESTDIR)usr/bin/
