@@ -124,7 +124,7 @@ impl Header for XRequestId {
     }
 
     fn fmt_header(&self, fmt: &mut header::Formatter) -> Result<(), fmt::Error> {
-        fmt.fmt_line(&format!("{:x}", self.0))
+        fmt.fmt_line(&format!("{:016x}", self.0))
     }
 }
 
