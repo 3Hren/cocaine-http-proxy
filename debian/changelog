@@ -1,3 +1,10 @@
+cocaine-http-proxy (0.3.20) unstable; urgency=low
+
+  * Fixed: add cdbs and curl to debian/control
+  * Fixed: format XRequestId with fixed length for response
+
+ -- Kirill Smorodinnikov <shaitkir@gmail.com>  Fri, 22 Jun 2018 10:31:49 +0300
+
 cocaine-http-proxy (0.3.19) unstable; urgency=medium
 
   * Feat: set X-Error-Generated-By: vicodyn
